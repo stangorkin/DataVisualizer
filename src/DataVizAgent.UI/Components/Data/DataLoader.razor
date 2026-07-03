@@ -1,0 +1,129 @@
+@using DataVizAgent.Services
+@inject IDataService DataService
+@inject IReportSessionService ReportSession
+@implements IDisposable
+
+<div class="data-loader">
+    <h3>Dataset</h3>
+
+    @if (DataService.RowCount > 0)
+    {
+        <p class="dataset-info">
+            <strong>@DataService.DatasetName</strong> — @DataService.RowCount rows
+        </p>
+        <table class="schema-table">
+            <thead><tr><th>Column</th><th>Type</th></tr></thead>
+            <tbody>
+                @foreach (var col in DataService.GetSchema())
+                {
+                    <tr><td>@col.Name</td><td>@col.Type.ToString().ToLowerInvariant()</td></tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p class="hint">No dataset loaded. Upload a CSV, Excel, or JSON file below.</p>
+    }
+
+    <label for="dataset-file-input" class="secondary-button file-input-label">
+        @(DataService.RowCount > 0 ? "Replace file…" : "Choose file…")
+    </label>
+    <InputFile id="dataset-file-input" @key="_inputKey" OnChange="OnFileSelected"
+               accept=".csv,.xlsx,.json,.ndjson" class="session-file-input" />
+
+    @if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <p class="error">@_errorMessage</p>
+    }
+
+    <DatabaseLoader />
+</div>
+
+@code {
+    private string? _errorMessage;
+    private string _inputKey = "initial";
+
+    protected override void OnInitialized()
+    {
+        DataService.Changed += HandleDataChanged;
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _errorMessage = null;
+        var file = e.File;
+        string ext = Path.GetExtension(file.Name).ToLowerInvariant();
+
+        if (ext is not (".csv" or ".xlsx" or ".json" or ".ndjson"))
+        {
+            _errorMessage = "Only .csv, .xlsx, .json, and .ndjson files are supported.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        try
+        {
+            await using var uploadStream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
+            await using var bufferedStream = new MemoryStream();
+            await uploadStream.CopyToAsync(bufferedStream);
+            bufferedStream.Position = 0;
+
+            bool isSpreadsheet = ext == ".xlsx" || LooksLikeSpreadsheet(bufferedStream);
+            bufferedStream.Position = 0;
+
+            if (isSpreadsheet)
+                await DataService.LoadSpreadsheetFromStreamAsync(bufferedStream, file.Name);
+            else if (ext == ".csv")
+                await DataService.LoadCsvFromStreamAsync(bufferedStream, file.Name);
+            else
+                await DataService.LoadJsonFromStreamAsync(bufferedStream, file.Name);
+
+            ReportSession.StartNewReport(DataService.DatasetName, BuildReportTitle(DataService.DatasetName));
+        }
+        catch (InvalidDataException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load file: {ex.Message}";
+        }
+
+        _inputKey = Guid.NewGuid().ToString();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static bool LooksLikeSpreadsheet(Stream stream)
+    {
+        long originalPosition = stream.Position;
+        Span<byte> header = stackalloc byte[4];
+        int bytesRead = stream.Read(header);
+        stream.Position = originalPosition;
+
+        return bytesRead == 4
+            && header[0] == (byte)'P'
+            && header[1] == (byte)'K'
+            && header[2] == 0x03
+            && header[3] == 0x04;
+    }
+
+    private static string BuildReportTitle(string? datasetName)
+    {
+        string trimmedName = string.IsNullOrWhiteSpace(datasetName)
+            ? "Untitled"
+            : datasetName.Trim();
+
+        return $"{trimmedName} Report";
+    }
+
+    private void HandleDataChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        DataService.Changed -= HandleDataChanged;
+    }
+}

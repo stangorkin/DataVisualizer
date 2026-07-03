@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DataViz Agent</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3' y='12' width='4' height='8' rx='1' fill='%232563eb'/%3E%3Crect x='10' y='7' width='4' height='13' rx='1' fill='%232563eb'/%3E%3Crect x='17' y='4' width='4' height='16' rx='1' fill='%232563eb'/%3E%3C/svg%3E" />
+    <base href="/" />
+    <link rel="stylesheet" href='@Assets["_content/Blazor-ApexCharts/css/apexcharts.css"]' />
+    <link rel="stylesheet" href='@Assets["_content/DataVizAgent.UI/app.css"]' />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src='@Assets["_content/DataVizAgent.UI/session-file.js"]'></script>
+    <script src='@Assets["_framework/blazor.web.js"]'></script>
+</body>
+</html>

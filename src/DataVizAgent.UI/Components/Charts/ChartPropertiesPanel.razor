@@ -1,0 +1,180 @@
+@using DataVizAgent.Models
+@using DataVizAgent.Services
+@inject IDataService DataService
+@inject IReportSessionService ReportSession
+@implements IDisposable
+
+<div class="properties-panel">
+    <h3>Properties</h3>
+
+    @if (SelectedVisual is null)
+    {
+        <p class="hint">Select a chart in the report to adjust it manually.</p>
+    }
+    else
+    {
+        <div class="properties-header">
+            <p class="hint">Editing <strong>@SelectedVisual.Chart.Title</strong></p>
+            <button type="button" class="secondary-button" @onclick="ClearSelection">Done</button>
+        </div>
+
+        <div class="property-group">
+            <label class="property-label" for="chart-title">Title</label>
+            <input id="chart-title" class="properties-input" @bind="_title" @bind:event="oninput" />
+        </div>
+
+        <div class="property-group">
+            <label class="property-label" for="chart-type">Chart Type</label>
+            <select id="chart-type" class="properties-select" @bind="_type">
+                @foreach (DataVizAgent.Models.ChartType chartType in Enum.GetValues<DataVizAgent.Models.ChartType>())
+                {
+                    <option value="@chartType">@chartType</option>
+                }
+            </select>
+        </div>
+
+        <div class="property-group">
+            <label class="property-label" for="chart-x">X Column</label>
+            <select id="chart-x" class="properties-select" @bind="_xColumn">
+                @foreach (ColumnInfo column in Columns)
+                {
+                    <option value="@column.Name">@column.Name</option>
+                }
+            </select>
+        </div>
+
+        <div class="property-group">
+            <label class="property-label" for="chart-y">Y Column</label>
+            <select id="chart-y" class="properties-select" @bind="_yColumn">
+                @if (AvailableYColumns.Count == 0)
+                {
+                    <option value="">No numeric columns available</option>
+                }
+                else
+                {
+                    @foreach (ColumnInfo column in AvailableYColumns)
+                    {
+                        <option value="@column.Name">@column.Name</option>
+                    }
+                }
+            </select>
+            <p class="hint">Count can use any column. Other modes only show numeric Y columns.</p>
+        </div>
+
+        <div class="property-group">
+            <label class="property-label" for="chart-aggregation">Aggregation</label>
+            <select id="chart-aggregation" class="properties-select" @bind="_aggregation" @bind:after="HandleAggregationChanged">
+                @foreach (Aggregation aggregation in Enum.GetValues<Aggregation>())
+                {
+                    <option value="@aggregation">@aggregation</option>
+                }
+            </select>
+        </div>
+
+        <button class="apply-button" @onclick="ApplyChanges">Apply Changes</button>
+
+        @if (!string.IsNullOrWhiteSpace(_statusMessage))
+        {
+            <p class="@(_statusIsError ? "error" : "hint")">@_statusMessage</p>
+        }
+    }
+</div>
+
+@code {
+    private Guid? _loadedVisualId;
+    private string _title = string.Empty;
+    private DataVizAgent.Models.ChartType _type = DataVizAgent.Models.ChartType.Bar;
+    private string _xColumn = string.Empty;
+    private string _yColumn = string.Empty;
+    private Aggregation _aggregation = Aggregation.None;
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    private ChartVisual? SelectedVisual => ReportSession.SelectedVisual;
+    private IReadOnlyList<ColumnInfo> Columns => DataService.GetSchema();
+    private IReadOnlyList<ColumnInfo> AvailableYColumns => RequiresNumericYColumn
+        ? [.. Columns.Where(IsNumericColumn)]
+        : Columns;
+    private bool RequiresNumericYColumn => _aggregation != Aggregation.Count;
+
+    protected override void OnInitialized()
+    {
+        ReportSession.Changed += HandleReportChanged;
+        SyncFromSelection();
+    }
+
+    private void HandleReportChanged()
+    {
+        SyncFromSelection();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void SyncFromSelection()
+    {
+        if (SelectedVisual is null)
+        {
+            _loadedVisualId = null;
+            _statusMessage = null;
+            return;
+        }
+
+        _loadedVisualId = SelectedVisual.Id;
+        ChartVisualDefinition definition = ChartVisualDefinition.FromChartSpec(SelectedVisual.Chart);
+        _title = definition.Title;
+        _type = definition.Type;
+        _xColumn = definition.XColumn;
+        _yColumn = definition.YColumn;
+        _aggregation = definition.Aggregation;
+        EnsureValidYColumnSelection();
+        _statusMessage = null;
+        _statusIsError = false;
+    }
+
+    private void HandleAggregationChanged()
+    {
+        EnsureValidYColumnSelection();
+        _statusMessage = null;
+        _statusIsError = false;
+    }
+
+    private void ApplyChanges()
+    {
+        var definition = new ChartVisualDefinition(
+            _type,
+            _title,
+            _xColumn,
+            _yColumn,
+            _aggregation);
+
+        if (ReportSession.TryUpdateSelectedChart(definition, out string? validationError))
+        {
+            _statusMessage = "Chart updated.";
+            _statusIsError = false;
+        }
+        else
+        {
+            _statusMessage = validationError;
+            _statusIsError = true;
+        }
+    }
+
+    private void ClearSelection()
+    {
+        ReportSession.SelectVisual(null);
+    }
+
+    private void EnsureValidYColumnSelection()
+    {
+        if (AvailableYColumns.Any(column => string.Equals(column.Name, _yColumn, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        _yColumn = AvailableYColumns.FirstOrDefault()?.Name ?? string.Empty;
+    }
+
+    private static bool IsNumericColumn(ColumnInfo column) => column.Type == ColumnType.Number;
+
+    public void Dispose()
+    {
+        ReportSession.Changed -= HandleReportChanged;
+    }
+}

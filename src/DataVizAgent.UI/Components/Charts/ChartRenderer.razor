@@ -1,0 +1,70 @@
+@using ApexCharts
+@using DataVizAgent.Models
+
+@if (Spec is not null && Spec.Labels.Length > 0)
+{
+    <div class="chart-container">
+        @if (ShowTitle)
+        {
+            <h4>@Spec.Title</h4>
+        }
+
+        @if (Spec.Type == DataVizAgent.Models.ChartType.Pie)
+        {
+            <ApexChart TItem="ChartPoint" Title="@Spec.Title">
+                <ApexPointSeries TItem="ChartPoint"
+                                 Items="_points"
+                                 SeriesType="SeriesType.Pie"
+                                 XValue="p => p.Label"
+                                 YValue="p => (decimal)p.Value" />
+            </ApexChart>
+        }
+        else if (Spec.Type == DataVizAgent.Models.ChartType.Scatter)
+        {
+            <ApexChart TItem="ChartPoint" Title="@Spec.Title">
+                <ApexPointSeries TItem="ChartPoint"
+                                 Items="_points"
+                                 SeriesType="SeriesType.Scatter"
+                                 XValue="p => p.Label"
+                                 YValue="p => (decimal)p.Value" />
+            </ApexChart>
+        }
+        else if (Spec.Type == DataVizAgent.Models.ChartType.Line)
+        {
+            <ApexChart TItem="ChartPoint" Title="@Spec.Title">
+                <ApexPointSeries TItem="ChartPoint"
+                                 Items="_points"
+                                 SeriesType="SeriesType.Line"
+                                 XValue="p => p.Label"
+                                 YValue="p => (decimal)p.Value" />
+            </ApexChart>
+        }
+        else
+        {
+            <ApexChart TItem="ChartPoint" Title="@Spec.Title">
+                <ApexPointSeries TItem="ChartPoint"
+                                 Items="_points"
+                                 SeriesType="SeriesType.Bar"
+                                 XValue="p => p.Label"
+                                 YValue="p => (decimal)p.Value" />
+            </ApexChart>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public ChartSpec? Spec { get; set; }
+    [Parameter] public bool ShowTitle { get; set; } = true;
+
+    private List<ChartPoint> _points = [];
+
+    protected override void OnParametersSet()
+    {
+        if (Spec is null) return;
+        _points = Enumerable.Range(0, Spec.Labels.Length)
+            .Select(i => new ChartPoint(Spec.Labels[i], Spec.Values[i]))
+            .ToList();
+    }
+
+    private sealed record ChartPoint(string Label, double Value);
+}

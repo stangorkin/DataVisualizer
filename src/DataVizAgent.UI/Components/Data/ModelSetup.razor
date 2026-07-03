@@ -1,0 +1,110 @@
+@using DataVizAgent.Models
+@using DataVizAgent.Services
+@inject IModelDownloadService Downloads
+
+@if (_downloading && _selected is not null)
+{
+    <div class="model-setup">
+        <h3>Downloading @_selected.Name</h3>
+        <p class="hint">@PhaseLabel — @FormatGb(_progress.BytesReceived) of @FormatGb(_progress.TotalBytes) (@PercentLabel)</p>
+        <div class="model-progress-track">
+            <div class="model-progress-bar" style="width:@PercentLabel"></div>
+        </div>
+        <button type="button" class="secondary-button" @onclick="Cancel">Cancel</button>
+    </div>
+}
+else if (_state == SetupState.Done)
+{
+    <div class="model-setup">
+        <p class="db-status-ok">Model installed. You can start chatting with your data below.</p>
+        <button type="button" class="secondary-button" @onclick="() => _state = SetupState.Idle">Dismiss</button>
+    </div>
+}
+else if (!Downloads.IsModelInstalled())
+{
+    <div class="model-setup">
+        <h3>Set up a model</h3>
+        <p class="hint">
+            This app runs a local AI model — none is installed yet. Pick one to download (one-time),
+            or drop your own <code>.gguf</code> into the <code>models</code> folder.
+        </p>
+
+        @if (_error is not null)
+        {
+            <p class="error">@_error</p>
+        }
+
+        <div class="model-list">
+            @foreach (DownloadableModel model in Downloads.Catalog)
+            {
+                <div class="model-card @(model.IsRecommended ? "recommended" : null)">
+                    <div class="model-card-head">
+                        <span class="model-card-name">@model.Name</span>
+                        <span class="model-card-tier">@model.Tier</span>
+                        <span class="model-card-size">@FormatGb(model.SizeBytes)</span>
+                    </div>
+                    <p class="model-card-desc">@model.Description</p>
+                    <div class="model-card-foot">
+                        <span class="model-card-hw">Needs: @model.HardwareHint</span>
+                        <button type="button" class="primary-button" @onclick="() => StartDownloadAsync(model)">Download</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private enum SetupState { Idle, Done }
+
+    private SetupState _state = SetupState.Idle;
+    private bool _downloading;
+    private DownloadableModel? _selected;
+    private ModelDownloadProgress _progress;
+    private string? _error;
+    private CancellationTokenSource? _cts;
+
+    private string PercentLabel => $"{_progress.Fraction * 100:0}%";
+
+    private string PhaseLabel => _progress.Phase == ModelDownloadPhase.Verifying ? "Verifying" : "Downloading";
+
+    private static string FormatGb(long bytes) => $"{bytes / 1_000_000_000d:0.0} GB";
+
+    private async Task StartDownloadAsync(DownloadableModel model)
+    {
+        _error = null;
+        _selected = model;
+        _progress = new ModelDownloadProgress(ModelDownloadPhase.Downloading, 0, model.SizeBytes);
+        _downloading = true;
+        _cts = new CancellationTokenSource();
+
+        var progress = new Progress<ModelDownloadProgress>(value =>
+        {
+            _progress = value;
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            await Downloads.DownloadAsync(model, progress, _cts.Token);
+            _state = SetupState.Done;
+        }
+        catch (OperationCanceledException)
+        {
+            _error = "Download canceled.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _downloading = false;
+            _cts?.Dispose();
+            _cts = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void Cancel() => _cts?.Cancel();
+}

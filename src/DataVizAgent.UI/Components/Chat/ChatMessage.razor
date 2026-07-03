@@ -1,0 +1,11 @@
+@using DataVizAgent.Services
+
+<div class="chat-message @Role.ToLowerInvariant()">
+    <span class="chat-role">@(Role == "user" ? "You" : "Agent")</span>
+    <span class="chat-text">@Text</span>
+</div>
+
+@code {
+    [Parameter] public string Role { get; set; } = "user";
+    [Parameter] public string Text { get; set; } = string.Empty;
+}

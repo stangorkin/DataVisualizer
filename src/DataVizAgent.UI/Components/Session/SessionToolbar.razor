@@ -1,0 +1,225 @@
+@using System
+@using System.IO
+@using System.Text
+@using DataVizAgent.Services
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.JSInterop
+@implements IDisposable
+@inject ISessionFileService SessionFileService
+@inject ISessionFileDialogService SessionFileDialogService
+@inject ISessionCommandBus SessionCommandBus
+@inject IJSRuntime JS
+
+<div class="session-toolbar">
+    <div class="session-actions">
+        <button type="button" class="secondary-button" @onclick="StartNewSessionAsync">New Session</button>
+        <button type="button" class="secondary-button" @onclick="SaveSessionAsync">Save Session</button>
+        @if (SessionFileDialogService.UsesNativeDialogs)
+        {
+            <button type="button" class="secondary-button" @onclick="OpenSessionFromDialogAsync">Open Session</button>
+        }
+        else
+        {
+            <label for="session-open-input" class="secondary-button session-open-label">Open Session</label>
+            <InputFile id="session-open-input"
+                       @key="_fileInputKey"
+                       OnChange="OpenSessionAsync"
+                       accept=".json,.dva-session.json"
+                       class="session-file-input" />
+        }
+        <button type="button" class="secondary-button" @onclick="PrintReportAsync">Print Page</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <div class="@GetStatusCssClass()">@_statusMessage</div>
+    }
+</div>
+
+@code {
+    private string _fileInputKey = Guid.NewGuid().ToString();
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    protected override void OnInitialized()
+    {
+        SessionCommandBus.CommandRequested += OnCommandRequestedAsync;
+    }
+
+    public void Dispose()
+    {
+        SessionCommandBus.CommandRequested -= OnCommandRequestedAsync;
+    }
+
+    private Task OnCommandRequestedAsync(SessionCommand command)
+    {
+        return InvokeAsync(async () =>
+        {
+            switch (command)
+            {
+                case SessionCommand.New:
+                    await StartNewSessionAsync();
+                    break;
+                case SessionCommand.Open:
+                    await OpenSessionFromDialogAsync();
+                    break;
+                case SessionCommand.Save:
+                    await SaveSessionAsync();
+                    break;
+                case SessionCommand.Print:
+                    await PrintReportAsync();
+                    break;
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    private async Task SaveSessionAsync()
+    {
+        _statusMessage = null;
+        _statusIsError = false;
+
+        string json = await SessionFileService.ExportCurrentSessionAsync();
+        string fileName = SessionFileService.BuildDefaultFileName();
+
+        if (SessionFileDialogService.UsesNativeDialogs)
+        {
+            SessionFileSaveResult result = await SessionFileDialogService.SaveSessionAsync(fileName, json);
+            if (result.IsCanceled)
+            {
+                _statusMessage = "Save session canceled.";
+                return;
+            }
+
+            if (!result.Succeeded)
+            {
+                _statusMessage = result.ErrorMessage ?? "Unable to save the session.";
+                _statusIsError = true;
+                return;
+            }
+
+            _statusMessage = $"Session exported as {result.FileName ?? fileName}.";
+            return;
+        }
+
+        await JS.InvokeVoidAsync("DataVizAgent.downloadTextFile", fileName, "application/json", json);
+        _statusMessage = $"Session exported as {fileName}.";
+    }
+
+    private async Task PrintReportAsync()
+    {
+        _statusMessage = null;
+        _statusIsError = false;
+        await JS.InvokeVoidAsync("DataVizAgent.printReport");
+    }
+
+    private async Task OpenSessionAsync(InputFileChangeEventArgs args)
+    {
+        _statusMessage = null;
+        _statusIsError = false;
+
+        IBrowserFile? file = args.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        if (!await ConfirmSessionReplacementAsync($"open {file.Name}"))
+        {
+            _statusMessage = "Open session canceled.";
+            _fileInputKey = Guid.NewGuid().ToString();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        await using Stream stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        string json = await reader.ReadToEndAsync();
+
+        await LoadSessionFromJsonAsync(json, file.Name);
+
+        _fileInputKey = Guid.NewGuid().ToString();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OpenSessionFromDialogAsync()
+    {
+        _statusMessage = null;
+        _statusIsError = false;
+
+        SessionFileOpenResult result = await SessionFileDialogService.OpenSessionAsync();
+        if (result.IsCanceled)
+        {
+            _statusMessage = "Open session canceled.";
+            return;
+        }
+
+        if (!result.Succeeded || string.IsNullOrWhiteSpace(result.Content))
+        {
+            _statusMessage = result.ErrorMessage ?? "Unable to open the selected session file.";
+            _statusIsError = true;
+            return;
+        }
+
+        string fileName = result.FileName ?? "the selected file";
+        if (!await ConfirmSessionReplacementAsync($"open {fileName}"))
+        {
+            _statusMessage = "Open session canceled.";
+            return;
+        }
+
+        await LoadSessionFromJsonAsync(result.Content, fileName);
+    }
+
+    private async Task StartNewSessionAsync()
+    {
+        _statusMessage = null;
+        _statusIsError = false;
+
+        if (!await ConfirmSessionReplacementAsync("start a new session"))
+        {
+            _statusMessage = "New session canceled.";
+            return;
+        }
+
+        SessionFileService.StartNewSession();
+        _statusMessage = "Started a new blank session.";
+    }
+
+    private async Task LoadSessionFromJsonAsync(string json, string fileName)
+    {
+        SessionLoadResult result = await SessionFileService.TryLoadSessionAsync(json);
+        if (result.Succeeded)
+        {
+            _statusMessage = $"Session loaded from {fileName}.";
+            _statusIsError = false;
+            return;
+        }
+
+        _statusMessage = result.ErrorMessage ?? "Unable to load the selected session file.";
+        _statusIsError = true;
+    }
+
+    private async Task<bool> ConfirmSessionReplacementAsync(string actionDescription)
+    {
+        if (!SessionFileService.HasActiveSession())
+        {
+            return true;
+        }
+
+        if (SessionFileDialogService.UsesNativeDialogs)
+        {
+            return await SessionFileDialogService.ConfirmReplaceAsync(actionDescription);
+        }
+
+        return await JS.InvokeAsync<bool>(
+            "DataVizAgent.confirmAction",
+            $"This will discard the current dataset, report, and chat history. Continue to {actionDescription}?");
+    }
+
+    private string GetStatusCssClass()
+    {
+        return _statusIsError ? "session-status session-status-error" : "session-status";
+    }
+}

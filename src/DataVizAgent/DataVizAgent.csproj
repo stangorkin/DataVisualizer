@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>DataVizAgent</RootNamespace>
+    <AssemblyName>DataVizAgent</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DataVizAgent.Core\DataVizAgent.Core.csproj" />
+    <ProjectReference Include="..\DataVizAgent.UI\DataVizAgent.UI.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,25 @@
+@page "/"
+@using DataVizAgent.Services
+@using DataVizAgent.Components.Data
+@using DataVizAgent.Components.Chat
+@using DataVizAgent.Components.Charts
+@using DataVizAgent.Components.Session
+
+<div class="dva-layout">
+    <div class="dva-left">
+        <ModelSetup />
+        <DataLoader />
+        <ChatPanel />
+    </div>
+    <div class="dva-right">
+        <SessionToolbar />
+        <div class="report-workspace">
+            <div class="report-canvas">
+                <ChartPanel />
+            </div>
+            <div class="report-sidebar">
+                <ChartPropertiesPanel />
+            </div>
+        </div>
+    </div>
+</div>

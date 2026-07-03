@@ -1,0 +1,274 @@
+@using DataVizAgent.Models
+@using DataVizAgent.Services
+@inject IDataService DataService
+@inject IReportSessionService ReportSession
+@implements IDisposable
+
+<div class="chart-panel">
+    <div class="panel-header">
+        <h3>Report</h3>
+        @if (SelectedVisual is not null)
+        {
+            <span class="selection-pill">Selected: @SelectedVisual.Chart.Title</span>
+        }
+    </div>
+    <p class="dataset-info">
+        <strong>@ReportSession.CurrentReport.Title</strong>
+        @if (!string.IsNullOrWhiteSpace(ReportSession.CurrentReport.DatasetName))
+        {
+            <span> — dataset: @ReportSession.CurrentReport.DatasetName</span>
+        }
+    </p>
+    @if (ShowRestoreHint)
+    {
+        <p class="hint">Report restored from the last session. Reload the dataset to edit or regenerate visuals.</p>
+    }
+    @if (Charts.Count == 0)
+    {
+        <div class="empty-state">
+            <svg class="empty-state-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="12" width="4" height="8" rx="1" fill="currentColor" />
+                <rect x="10" y="7" width="4" height="13" rx="1" fill="currentColor" />
+                <rect x="17" y="4" width="4" height="16" rx="1" fill="currentColor" />
+            </svg>
+            <p class="empty-state-text">No visuals yet</p>
+            <p class="empty-state-hint">Ask the assistant to chart your data — for example, "show sales by region" or "which provider is cheapest?"</p>
+        </div>
+    }
+    <div class="chart-list">
+        @foreach ((ChartVisual visual, int index) in Charts.Select((visual, index) => (visual, index)))
+        {
+            <div class="chart-frame @(IsSelected(visual) ? "selected" : null)">
+                <div class="chart-frame-header">
+                    <div>
+                        <p class="chart-frame-label">Visual @(index + 1)</p>
+                        <h4 class="chart-frame-title">@visual.Chart.Title</h4>
+                    </div>
+                    <button type="button"
+                            class="chart-select-button"
+                            aria-pressed="@IsSelected(visual)"
+                            @onclick="() => SelectVisual(visual.Id)">
+                        @(IsSelected(visual) ? "Editing" : "Edit")
+                    </button>
+                </div>
+                <ChartRenderer Spec="@visual.Chart" ShowTitle="false" />
+                @if (visual.Chart.Filters is { Length: > 0 } filters)
+                {
+                    <p class="chart-frame-filters">Filtered: @string.Join(", ", filters.Select(f => f.Describe()))</p>
+                }
+                @if (visual.Chart.IgnoredValueCount > 0)
+                {
+                    <p class="chart-frame-note">@FormatIgnoredNote(visual.Chart)</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(visual.Chart.Reason))
+                {
+                    <p class="chart-frame-reason">@visual.Chart.Reason</p>
+                }
+            </div>
+        }
+    </div>
+    <div class="page-tabs" role="tablist">
+        @foreach (ReportPage page in Pages)
+        {
+            <div class="page-tab @(IsActivePage(page) ? "active" : null) @(_dragOverPageId == page.Id ? "drag-over" : null)"
+                 draggable="true"
+                 @ondragstart="() => OnDragStart(page.Id)"
+                 @ondragover:preventDefault="true"
+                 @ondragenter="() => OnDragEnter(page.Id)"
+                 @ondrop="() => OnDrop(page.Id)"
+                 @ondragend="OnDragEnd"
+                 @oncontextmenu="e => OpenContextMenu(e, page.Id)"
+                 @oncontextmenu:preventDefault="true">
+                @if (_renamingPageId == page.Id)
+                {
+                    <input class="page-tab-input"
+                           value="@_renameText"
+                           @oninput="e => _renameText = e.Value?.ToString() ?? string.Empty"
+                           @onblur="CommitRename"
+                           @onkeydown="OnRenameKeyDown"
+                           @ref="_renameInput" />
+                }
+                else
+                {
+                    <button type="button"
+                            class="page-tab-button"
+                            role="tab"
+                            aria-selected="@IsActivePage(page)"
+                            @onclick="() => SelectPage(page.Id)"
+                            @ondblclick="() => BeginRename(page)">
+                        @(page.Title)
+                    </button>
+                    @if (Pages.Count > 1)
+                    {
+                        <button type="button"
+                                class="page-tab-close"
+                                title="Delete page"
+                                @onclick="() => RemovePage(page.Id)">
+                            ×
+                        </button>
+                    }
+                }
+            </div>
+        }
+        <button type="button" class="page-tab-add" title="Add page" @onclick="AddPage">+</button>
+    </div>
+</div>
+
+@if (_contextMenuPageId is not null)
+{
+    <div class="page-context-overlay" @onclick="CloseContextMenu" @oncontextmenu:preventDefault="true" @oncontextmenu="CloseContextMenu"></div>
+    <div class="page-context-menu" style="left:@(_contextMenuX)px; top:@(_contextMenuY)px;">
+        <button type="button" class="page-context-item" @onclick="RenameFromContextMenu">Rename</button>
+        @if (Pages.Count > 1)
+        {
+            <button type="button" class="page-context-item danger" @onclick="DeleteFromContextMenu">Delete</button>
+        }
+    </div>
+}
+
+@code {
+    private Guid? _renamingPageId;
+    private string _renameText = string.Empty;
+    private ElementReference _renameInput;
+    private bool _focusRenameInput;
+
+    private Guid? _draggingPageId;
+    private Guid? _dragOverPageId;
+
+    private Guid? _contextMenuPageId;
+    private double _contextMenuX;
+    private double _contextMenuY;
+
+    private IReadOnlyList<ChartVisual> Charts => ReportSession.GetCurrentPageCharts();
+    private IReadOnlyList<ReportPage> Pages => ReportSession.GetPages();
+    private ChartVisual? SelectedVisual => ReportSession.SelectedVisual;
+    private bool ShowRestoreHint => Charts.Count > 0
+        && DataService.RowCount == 0
+        && !string.IsNullOrWhiteSpace(ReportSession.CurrentReport.DatasetName);
+
+    protected override void OnInitialized()
+    {
+        ReportSession.Changed += OnReportChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusRenameInput)
+        {
+            _focusRenameInput = false;
+            await _renameInput.FocusAsync();
+        }
+    }
+
+    private void OnReportChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private static string FormatIgnoredNote(ChartSpec chart)
+    {
+        string plural = chart.IgnoredValueCount == 1 ? "value" : "values";
+        return $"{chart.IgnoredValueCount} non-numeric {plural} in \"{chart.YColumn}\" were ignored.";
+    }
+
+    private bool IsSelected(ChartVisual visual) => ReportSession.SelectedVisual?.Id == visual.Id;
+
+    private void SelectVisual(Guid visualId) => ReportSession.SelectVisual(visualId);
+
+    private bool IsActivePage(ReportPage page) => ReportSession.ActivePage.Id == page.Id;
+
+    private void SelectPage(Guid pageId) => ReportSession.SelectPage(pageId);
+
+    private void AddPage() => ReportSession.AddPage();
+
+    private void RemovePage(Guid pageId) => ReportSession.RemovePage(pageId);
+
+    private void BeginRename(ReportPage page)
+    {
+        _renamingPageId = page.Id;
+        _renameText = page.Title;
+        _focusRenameInput = true;
+    }
+
+    private void CommitRename()
+    {
+        if (_renamingPageId is Guid pageId)
+            ReportSession.RenamePage(pageId, _renameText);
+
+        _renamingPageId = null;
+    }
+
+    private void OnRenameKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            CommitRename();
+        else if (e.Key == "Escape")
+            _renamingPageId = null;
+    }
+
+    private void OnDragStart(Guid pageId)
+    {
+        _draggingPageId = pageId;
+    }
+
+    private void OnDragEnter(Guid pageId)
+    {
+        if (_draggingPageId is not null && _draggingPageId != pageId)
+            _dragOverPageId = pageId;
+    }
+
+    private void OnDrop(Guid targetPageId)
+    {
+        if (_draggingPageId is Guid sourceId && sourceId != targetPageId)
+        {
+            int targetIndex = Pages.ToList().FindIndex(p => p.Id == targetPageId);
+            if (targetIndex >= 0)
+                ReportSession.MovePage(sourceId, targetIndex);
+        }
+
+        OnDragEnd();
+    }
+
+    private void OnDragEnd()
+    {
+        _draggingPageId = null;
+        _dragOverPageId = null;
+    }
+
+    private void OpenContextMenu(MouseEventArgs e, Guid pageId)
+    {
+        _contextMenuPageId = pageId;
+        _contextMenuX = e.ClientX;
+        _contextMenuY = e.ClientY;
+    }
+
+    private void CloseContextMenu()
+    {
+        _contextMenuPageId = null;
+    }
+
+    private void RenameFromContextMenu()
+    {
+        if (_contextMenuPageId is Guid pageId)
+        {
+            ReportPage? page = Pages.FirstOrDefault(p => p.Id == pageId);
+            if (page is not null)
+                BeginRename(page);
+        }
+
+        CloseContextMenu();
+    }
+
+    private void DeleteFromContextMenu()
+    {
+        if (_contextMenuPageId is Guid pageId)
+            ReportSession.RemovePage(pageId);
+
+        CloseContextMenu();
+    }
+
+    public void Dispose()
+    {
+        ReportSession.Changed -= OnReportChanged;
+    }
+}

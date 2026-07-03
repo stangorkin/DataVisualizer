@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DataVizAgent</RootNamespace>
+    <AssemblyName>DataVizAgent.Core</AssemblyName>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- The CUDA backend adds ~1 GB of native libraries, so it is opt-in:
+         build with -p:EnableCuda=true and set LLamaSharp:Backend to "cuda". -->
+    <EnableCuda Condition="'$(EnableCuda)' == ''">false</EnableCuda>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DataVizAgent.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CsvHelper" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Agents.AI" />
+    <PackageReference Include="LLamaSharp" />
+    <PackageReference Include="LLamaSharp.Backend.Cpu" />
+    <PackageReference Include="LLamaSharp.Backend.Cuda12" Condition="'$(EnableCuda)' == 'true'" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+</Project>

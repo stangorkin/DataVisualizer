@@ -1,0 +1,140 @@
+@using DataVizAgent.Services
+@inject IChatService ChatService
+@implements IDisposable
+
+<div class="chat-panel">
+    <h3>Chat</h3>
+    <div class="chat-messages" @ref="_messageContainer">
+        @foreach (var msg in _messages)
+        {
+            <ChatMessage Role="@msg.Role" Text="@msg.Text" />
+        }
+        @if (_isThinking && _messages.Count > 0 && string.IsNullOrEmpty(_messages[^1].Text))
+        {
+            <div class="chat-message assistant thinking">
+                <span class="thinking-dots"><span></span><span></span><span></span></span>
+            </div>
+        }
+    </div>
+    <div class="chat-input-row">
+        <textarea @bind="_input" @bind:event="oninput"
+                  @onkeydown="OnKeyDown"
+                  class="chat-input"
+                  placeholder="Ask about your data…"
+                  rows="2"
+                  disabled="@_isThinking" />
+        <button class="send-button" @onclick="SendAsync" disabled="@_isThinking">
+            @if (_isThinking)
+            {
+                <span class="btn-spinner"></span>
+            }
+            Send
+        </button>
+    </div>
+</div>
+
+@code {
+    private record ChatMessageModel(string Role, string Text);
+
+    private readonly List<ChatMessageModel> _messages = [];
+    private string _input = string.Empty;
+    private bool _isThinking = false;
+    private ElementReference _messageContainer;
+    private CancellationTokenSource _cts = new();
+
+    private IConversationDisplayHistory? _displayHistory;
+
+    protected override void OnInitialized()
+    {
+        ChatService.HistoryCleared += HandleHistoryCleared;
+
+        // Pipelines with persistent conversation (the agent pipeline) expose their prior log so the
+        // chat panel can repopulate after a restart or a session load.
+        if (ChatService is IConversationDisplayHistory displayHistory)
+        {
+            _displayHistory = displayHistory;
+            _displayHistory.DisplayHistoryChanged += HandleDisplayHistoryChanged;
+            LoadDisplayHistory();
+        }
+    }
+
+    private void LoadDisplayHistory()
+    {
+        if (_displayHistory is null) return;
+
+        _messages.Clear();
+        foreach (ChatHistoryEntry entry in _displayHistory.GetDisplayHistory())
+            _messages.Add(new(entry.Role, entry.Text));
+    }
+
+    private void HandleDisplayHistoryChanged()
+    {
+        InvokeAsync(() =>
+        {
+            LoadDisplayHistory();
+            StateHasChanged();
+        });
+    }
+
+    private async Task SendAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_input) || _isThinking) return;
+        string text = _input.Trim();
+        _input = string.Empty;
+        _isThinking = true;
+        _messages.Add(new("user", text));
+        _messages.Add(new("assistant", string.Empty));
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            // Each snapshot is the full displayable text so far and replaces the previous one.
+            await foreach (string snapshot in ChatService.SendAsync(text, _cts.Token))
+            {
+                _messages[^1] = _messages[^1] with { Text = snapshot };
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _messages[^1] = _messages[^1] with { Text = $"[Error: {ex.Message}]" };
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            // Drop the bubble when the reply was chart-only (no prose to show).
+            if (_messages.Count > 0 && _messages[^1].Role == "assistant" && string.IsNullOrWhiteSpace(_messages[^1].Text))
+                _messages.RemoveAt(_messages.Count - 1);
+
+            _isThinking = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendAsync();
+    }
+
+    private void HandleHistoryCleared()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        _messages.Clear();
+        _input = string.Empty;
+        _isThinking = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ChatService.HistoryCleared -= HandleHistoryCleared;
+        if (_displayHistory is not null)
+            _displayHistory.DisplayHistoryChanged -= HandleDisplayHistoryChanged;
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

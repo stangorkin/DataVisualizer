@@ -1,0 +1,154 @@
+@using DataVizAgent.Models
+@using DataVizAgent.Services
+@inject IDataService DataService
+@inject IReportSessionService ReportSession
+@inject IDatabaseImportService DatabaseImport
+
+<div class="db-loader">
+    <button type="button" class="db-loader-toggle" @onclick="ToggleOpen">
+        <span class="db-loader-icon">🗄</span>
+        Connect to Database
+        <span class="db-loader-chevron">@(_open ? "▲" : "▼")</span>
+    </button>
+
+    @if (_open)
+    {
+        <div class="db-loader-form">
+            <div class="db-field">
+                <label class="db-label">Provider</label>
+                <select class="db-select" @bind="_profile.Provider">
+                    <option value="@DbProvider.SQLite">SQLite</option>
+                    <option value="@DbProvider.SqlServer">SQL Server</option>
+                    <option value="@DbProvider.PostgreSQL">PostgreSQL</option>
+                </select>
+            </div>
+
+            <div class="db-field">
+                <label class="db-label">Connection string</label>
+                <input type="text"
+                       class="db-input"
+                       placeholder="@ConnectionStringPlaceholder"
+                       @bind="_profile.ConnectionString"
+                       spellcheck="false" />
+            </div>
+
+            <div class="db-field">
+                <label class="db-label">Dataset name</label>
+                <input type="text"
+                       class="db-input"
+                       placeholder="e.g. orders"
+                       @bind="_profile.DatasetName" />
+            </div>
+
+            <div class="db-field">
+                <label class="db-label">
+                    SELECT query
+                    <span class="db-label-note">(SELECT only — no modifications permitted)</span>
+                </label>
+                <textarea class="db-textarea"
+                          rows="4"
+                          placeholder="SELECT * FROM orders LIMIT 1000"
+                          @bind="_profile.Query"
+                          spellcheck="false"></textarea>
+            </div>
+
+            <div class="db-field db-field-inline">
+                <label class="db-label">Max rows</label>
+                <input type="number"
+                       class="db-input db-input-short"
+                       min="1"
+                       max="500000"
+                       @bind="_profile.MaxRows" />
+            </div>
+
+            <div class="db-actions">
+                <button type="button"
+                        class="secondary-button"
+                        disabled="@_busy"
+                        @onclick="TestConnectionAsync">
+                    Test connection
+                </button>
+                <button type="button"
+                        class="primary-button"
+                        disabled="@(_busy || string.IsNullOrWhiteSpace(_profile.Query))"
+                        @onclick="ImportAsync">
+                    Import
+                </button>
+            </div>
+
+            @if (_statusMessage is not null)
+            {
+                <p class="@(_statusIsError ? "error" : "db-status-ok")">@_statusMessage</p>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private bool _open;
+    private bool _busy;
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    private readonly DbConnectionProfile _profile = new();
+
+    private string ConnectionStringPlaceholder => _profile.Provider switch
+    {
+        DbProvider.SQLite => "Data Source=C:\\path\\to\\database.db",
+        DbProvider.SqlServer => "Server=localhost;Database=mydb;Trusted_Connection=true;",
+        DbProvider.PostgreSQL => "Host=localhost;Database=mydb;Username=postgres;Password=…",
+        _ => string.Empty,
+    };
+
+    private void ToggleOpen()
+    {
+        _open = !_open;
+        _statusMessage = null;
+    }
+
+    private async Task TestConnectionAsync()
+    {
+        _busy = true;
+        _statusMessage = null;
+        _statusIsError = false;
+        await InvokeAsync(StateHasChanged);
+
+        var (success, error) = await DatabaseImport.TestConnectionAsync(_profile);
+
+        _statusMessage = success ? "Connection successful." : error ?? "Connection failed.";
+        _statusIsError = !success;
+        _busy = false;
+    }
+
+    private async Task ImportAsync()
+    {
+        _busy = true;
+        _statusMessage = null;
+        _statusIsError = false;
+        await InvokeAsync(StateHasChanged);
+
+        var result = await DatabaseImport.ImportAsync(_profile);
+
+        if (!result.Success)
+        {
+            _statusMessage = result.Error ?? "Import failed.";
+            _statusIsError = true;
+            _busy = false;
+            return;
+        }
+
+        string name = string.IsNullOrWhiteSpace(_profile.DatasetName)
+            ? $"db-query-{DateTime.Now:HHmmss}"
+            : _profile.DatasetName.Trim();
+
+        DataService.LoadRows(name, result.Headers, result.Rows);
+        ReportSession.StartNewReport(DataService.DatasetName, $"{DataService.DatasetName} Report");
+
+        _statusMessage = result.WasTruncated
+            ? $"Imported {result.Rows.Count:N0} rows (truncated — increase Max rows to import more)."
+            : $"Imported {result.Rows.Count:N0} rows.";
+        _statusIsError = false;
+        _open = false;
+        _busy = false;
+    }
+}

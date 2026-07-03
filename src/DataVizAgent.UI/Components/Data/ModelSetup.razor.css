@@ -1,0 +1,88 @@
+.model-setup {
+    border: 1px solid #d8dee8;
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.75rem;
+    background: #fbfcfe;
+}
+
+.model-setup h3 {
+    margin: 0 0 0.35rem;
+}
+
+.model-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+}
+
+.model-card {
+    border: 1px solid #e2e6ee;
+    border-radius: 6px;
+    padding: 0.6rem 0.7rem;
+    background: #fff;
+}
+
+.model-card.recommended {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary) inset;
+}
+
+.model-card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.model-card-name {
+    font-weight: 600;
+}
+
+.model-card-tier {
+    font-size: 0.75rem;
+    color: var(--color-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.model-card-size {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    color: #5a6473;
+}
+
+.model-card-desc {
+    margin: 0.35rem 0;
+    font-size: 0.9rem;
+    color: #3a414c;
+}
+
+.model-card-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.model-card-hw {
+    font-size: 0.82rem;
+    color: #5a6473;
+}
+
+.model-card-foot .primary-button {
+    margin-left: auto;
+}
+
+.model-progress-track {
+    height: 8px;
+    border-radius: 4px;
+    background: #e2e6ee;
+    overflow: hidden;
+    margin: 0.5rem 0 0.7rem;
+}
+
+.model-progress-bar {
+    height: 100%;
+    background: var(--color-primary);
+    transition: width 0.2s ease;
+}

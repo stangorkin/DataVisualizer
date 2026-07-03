@@ -1,0 +1,47 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+
+# VS / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+!**/packages/repositories.config
+
+# Publish output (use GitHub Releases instead)
+dist/
+
+# .NET secrets
+secrets.json
+appsettings.*.json
+!appsettings.json
+
+# AI model files — too large for git; users download separately.
+# (No bare "models/" rule here: on case-insensitive filesystems it would also
+# ignore the C# source folders named "Models". The runtime models folder lives
+# under bin/, which is already ignored.)
+*.gguf
+
+# Local launcher shortcuts (machine-specific absolute paths)
+*.lnk
+
+# Claude Code local tool permissions (machine-specific)
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# WebView2 user data
+WebView2UserData/
+EBWebView/
