@@ -45,7 +45,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path artifacts/desktop/models -Force | Out-Null
           Set-Content artifacts/desktop/models/PUT_YOUR_MODEL_HERE.txt @"
-          Place your GGUF model file in this folder.
+          You usually don't need to do anything here: run DataVizAgent.Desktop.exe and the
+          app will offer to download a model on first launch (verified, one-time).
+
+          To install a model manually instead, place your GGUF file in this folder.
           DataViz Agent automatically uses the first *.gguf file it finds here.
 
           Recommended models (Qwen3 - strong tool calling; grab the Q4_K_M .gguf):

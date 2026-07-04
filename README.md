@@ -23,10 +23,10 @@ Load a CSV, Excel, JSON file, or connect to a database, then chat with the agent
 
 1. Download `DataVizAgent-vX.Y.Z-win-x64.zip` from the [Releases](../../releases) page.
 2. Extract the zip.
-3. Download a GGUF model from [Hugging Face](https://huggingface.co/models?search=gguf) and place the `.gguf` file in the `models/` folder inside the extracted directory.
-4. Run `DataVizAgent.Desktop.exe` — no .NET installation required.
+3. Run `DataVizAgent.Desktop.exe` — no .NET installation required.
+4. On first launch the app detects that no model is installed and offers a one-time download, with picks for every hardware tier (see [Choosing a local model](#choosing-a-local-model)). Downloads are pinned to exact versions and SHA-256-verified.
 
-> **Which model?** See [Choosing a local model](#choosing-a-local-model) for picks across hardware tiers. Any GGUF instruct model works; the app uses the first `*.gguf` it finds in `models/`, so the filename doesn't matter.
+> **Bring your own model:** you can skip the in-app download entirely — drop any GGUF instruct model into the `models/` folder next to the exe. The app uses the first `*.gguf` it finds, so the filename doesn't matter. Useful for offline machines or models outside the built-in catalog.
 
 ### GPU acceleration (optional, build from source)
 
@@ -51,7 +51,7 @@ Then edit `appsettings.json` next to the published exe:
 
 ## Choosing a local model
 
-The app runs any GGUF instruct model, but the agent leans heavily on **tool calling** (it answers by calling chart/query tools, optionally grammar-constrained). The [Qwen3](https://huggingface.co/collections/Qwen/qwen3) family is a strong default here: it has excellent native tool calling and a hybrid "thinking" mode. The four picks below span hardware tiers — all are the `Q4_K_M` quant (the balanced default), linked to [bartowski](https://huggingface.co/bartowski)'s GGUF conversions. Download one `.gguf` and drop it in `models/`.
+These four models are the ones the **in-app first-run downloader** offers; this table is your guide for picking one there, or for downloading manually. The app runs any GGUF instruct model, but the agent leans heavily on **tool calling** (it answers by calling chart/query tools, optionally grammar-constrained), and the [Qwen3](https://huggingface.co/collections/Qwen/qwen3) family is a strong default: excellent native tool calling plus a hybrid "thinking" mode. All picks are the `Q4_K_M` quant (the balanced default), linked to [bartowski](https://huggingface.co/bartowski)'s GGUF conversions — to install manually, download one `.gguf` and drop it in `models/`.
 
 | Model | Q4_K_M size | Runs comfortably on | Best for |
 |---|---|---|---|
@@ -75,13 +75,13 @@ Notes:
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Windows (the desktop shell uses WPF + WebView2)
-- A GGUF model file
+- A GGUF model file (optional — the app offers to download one on first launch)
 
 ### Clone and run
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/DataVizAgent.git
-cd DataVizAgent
+git clone https://github.com/stangorkin/DataVisualizer.git
+cd DataVisualizer
 dotnet run --project src/DataVizAgent.Desktop/DataVizAgent.Desktop.csproj
 ```
 
