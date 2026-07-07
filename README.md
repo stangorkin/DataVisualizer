@@ -145,6 +145,11 @@ All three implement the same `IChatService`, so you can A/B them on one model by
 
 To make that robust, `LLamaSharp:ConstrainToolCalls` (default `true`) applies **GBNF grammar-constrained decoding**: `GbnfToolGrammarBuilder` turns the tools' JSON schemas into a llama.cpp grammar where the model may emit free prose *or* a single `tool_call` block whose JSON is forced — token by token — to use a known tool name, the right keys, and correctly typed values. A malformed call becomes literally unsamplable. Set it to `false` to compare against prompted-only output. The generator covers flat schemas of string/integer/number/boolean/string-enum (which is what the chart and query tools use); a tool with a nested-object or array parameter falls back to prompted-only automatically.
 
+## Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture — system diagram, the
+chart-request flow, the three agent pipelines, the data engine, and the persistence map.
+
 ## Project structure
 
 ```
