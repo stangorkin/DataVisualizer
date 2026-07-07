@@ -94,7 +94,7 @@ sequenceDiagram
     C->>D: GetDataSummary() + GetColumnProfile()
     C->>M: prompt = system + schema + history + user turn
     M-->>C: streamed tokens (prose + tool call)
-    Note over C: prose streamed to UI as snapshots;<br/>reasoning + tool JSON withheld
+    Note over C: prose streamed to UI as snapshots —<br/>reasoning + tool JSON withheld
     C->>V: Validate(chart request) against live schema
     V->>D: QuerySeriesWithStats(x, y, aggregation, filters)
     D-->>V: labels + values + ignored-value count
