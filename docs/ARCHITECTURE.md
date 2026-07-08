@@ -21,7 +21,8 @@ flowchart TB
     subgraph UI["DataVizAgent.UI — Blazor components"]
         CHAT["ChatPanel"]
         REPORT["ChartPanel + ChartPropertiesPanel"]
-        DATA["DataLoader + DatabaseLoader + ModelSetup"]
+        DATA["DataLoader + DatabaseLoader"]
+        SETUP["ModelSetup<br/>(first-run model picker)"]
         TOOLBAR["SessionToolbar"]
     end
 
@@ -47,9 +48,10 @@ flowchart TB
     REPORT --> RS
     DATA --> DS
     DATA --> DB
-    DATA --> DL
+    SETUP --> DL
     TOOLBAR --> SF
-    CS --> GGUF
+    DL -- "downloads + verifies<br/>into models/" --> GGUF
+    CS -- "loads via LlamaConfig.ModelPath" --> GGUF
     CS --> DS
     CS -- "OnChartSpec event" --> RS
     DS --> FILES
