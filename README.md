@@ -179,4 +179,4 @@ This builds a self-contained `win-x64` single-file exe, zips it with a `models/`
 
 ## License
 
-MIT
+[MIT](LICENSE)
