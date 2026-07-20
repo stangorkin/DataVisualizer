@@ -1,8 +1,11 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using DataVizAgent.Ai;
 using DataVizAgent.Models;
 using LLama;
 using LLama.Common;
+using LLama.Exceptions;
+using LLama.Native;
 using LLama.Sampling;
 
 namespace DataVizAgent.Services;
@@ -25,8 +28,14 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
 
     private readonly List<(string Role, string Content)> _history = [];
 
-    /// <summary>Conservative chars-per-token estimate used to fit history into the context window.</summary>
-    private const int EstimatedCharsPerToken = 3;
+    private static readonly string[] AntiPrompts = ["<|im_end|>", "</s>", "[INST]", "### User:"];
+
+    /// <summary>Shown when a complete chart/query block was emitted but could not be parsed at all.</summary>
+    private const string UnreadableToolCallMessage =
+        "The model produced a chart request this app couldn't read, so nothing was changed. Please try asking again.";
+
+    /// <summary>Set when the last inference stopped because the context window filled.</summary>
+    private bool _lastInferenceHitContextLimit;
 
     public event Action<ChartSpecResult>? OnChartSpec;
     public event Action? HistoryCleared;
@@ -82,8 +91,11 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
             AddAssistant = true
         };
 
-        if (!string.IsNullOrWhiteSpace(_config.SystemPrompt))
-            template.Add("system", _config.SystemPrompt);
+        string systemPrompt = _config.SystemPrompt ?? string.Empty;
+        if (_config.DisableThinking)
+            systemPrompt = $"{systemPrompt}\n/no_think".Trim();
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+            template.Add("system", systemPrompt);
 
         foreach ((string role, string content) in _history)
             template.Add(role, content);
@@ -138,20 +150,25 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
         }
 
         string modelMessage = BuildModelMessage(userText);
-        TrimHistoryToFit(modelMessage.Length);
 
-        string prompt = BuildPrompt(modelMessage);
-
-        InferenceParams inferParams = new()
+        // Trim history to fit and count the prompt exactly, so generation can be capped to the
+        // remaining context window — this is what prevents the llama.cpp NoKvSlot error.
+        string prompt = BuildTrimmedPrompt(modelMessage);
+        int promptTokens = PromptBudget.CountTokens(_weights!, prompt);
+        if (!PromptBudget.PromptFits(_config, promptTokens))
         {
-            MaxTokens = _config.MaxTokens,
-            AntiPrompts = ["<|im_end|>", "</s>", "[INST]", "### User:"],
-            SamplingPipeline = new DefaultSamplingPipeline { Temperature = _config.Temperature },
-        };
+            yield return PromptBudget.ContextTooSmallMessage(_config);
+            yield break;
+        }
 
         var rawBuffer = new StringBuilder();
-        await foreach (string snapshot in StreamInferenceAsync(prompt, inferParams, rawBuffer, ct).ConfigureAwait(false))
+        await foreach (string snapshot in RunInferenceAsync(prompt, promptTokens, rawBuffer, ct).ConfigureAwait(false))
             yield return snapshot;
+        if (_lastInferenceHitContextLimit)
+        {
+            yield return PromptBudget.ContextFullMessage;
+            yield break;
+        }
 
         string finalResponse = NormalizeResponse(rawBuffer.ToString());
 
@@ -165,8 +182,15 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
                 $"{modelMessage}\n\n[Tool result for your data query]\n{toolResult}\n\n" +
                 "Answer the user's question in plain language using this result. " +
                 "If a chart would help illustrate it, also include a chart tool call.";
-            await foreach (string snapshot in StreamInferenceAsync(BuildPrompt(followUp), inferParams, rawBuffer, ct).ConfigureAwait(false))
+            string followUpPrompt = BuildPrompt(followUp);
+            int followUpTokens = PromptBudget.CountTokens(_weights!, followUpPrompt);
+            await foreach (string snapshot in RunInferenceAsync(followUpPrompt, followUpTokens, rawBuffer, ct).ConfigureAwait(false))
                 yield return snapshot;
+            if (_lastInferenceHitContextLimit)
+            {
+                yield return PromptBudget.ContextFullMessage;
+                yield break;
+            }
 
             finalResponse = NormalizeResponse(rawBuffer.ToString());
         }
@@ -176,6 +200,28 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
 
         var request = ChartSpecParser.TryParse(finalResponse);
         string displayText = ChartSpecParser.StripChartBlocks(finalResponse).Trim();
+
+        // A generation cut off by the token cap can end mid tool call, leaving an opening
+        // ``` fence that never closes. Never show the fragment as chat text; when the cut
+        // swallowed the whole action, say what happened instead of staying silent.
+        if (ChartSpecParser.TryStripUnclosedFencedBlock(displayText, out string beforeFragment))
+        {
+            displayText = beforeFragment;
+            if (request is null)
+            {
+                displayText = string.IsNullOrEmpty(displayText)
+                    ? PromptBudget.ReplyCutOffMessage
+                    : $"{displayText}\n\n_{PromptBudget.ReplyCutOffMessage}_";
+            }
+        }
+        else if (request is null && ChartSpecParser.ContainsToolBlock(finalResponse))
+        {
+            // A complete ```chart/```query block that still failed to parse (malformed JSON).
+            // StripChartBlocks already removed it from display; explain instead of failing silently.
+            displayText = string.IsNullOrEmpty(displayText)
+                ? UnreadableToolCallMessage
+                : $"{displayText}\n\n_{UnreadableToolCallMessage}_";
+        }
 
         if (request is not null)
         {
@@ -193,33 +239,73 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
             }
         }
 
+        // A reply that was all hidden reasoning (cut at the token cap) would otherwise vanish
+        // silently after a long wait — surface what happened instead.
+        if (string.IsNullOrWhiteSpace(displayText) && request is null && rawBuffer.Length > 0)
+            displayText = PromptBudget.ThinkingExhaustedMessage;
+
         // Always emit the authoritative final snapshot — it replaces anything streamed
         // above (and clears tool-call residue when the reply was only a chart block).
         yield return displayText;
     }
 
     /// <summary>
-    /// Runs one inference pass, yielding a best-effort display snapshot per token.
+    /// Runs one inference pass, yielding a best-effort display snapshot per token. Generation is
+    /// capped so prompt + response stays inside the context window; a residual NoKvSlot is caught
+    /// and flagged (the caller then shows a friendly message) rather than surfacing as a raw error.
     /// The raw response accumulates in <paramref name="rawBuffer"/> for final parsing.
     /// </summary>
-    private async IAsyncEnumerable<string> StreamInferenceAsync(
+    private async IAsyncEnumerable<string> RunInferenceAsync(
         string prompt,
-        InferenceParams inferParams,
+        int promptTokens,
         StringBuilder rawBuffer,
         [EnumeratorCancellation] CancellationToken ct)
     {
         rawBuffer.Clear();
-        string lastDisplay = string.Empty;
+        _lastInferenceHitContextLimit = false;
 
-        await foreach (string token in _executor!.InferAsync(prompt, inferParams, ct).ConfigureAwait(false))
+        InferenceParams inferParams = new()
         {
-            rawBuffer.Append(token);
-            string display = ComputeStreamingDisplay(rawBuffer.ToString());
-            if (display.Length > 0 && display != lastDisplay)
+            MaxTokens = PromptBudget.MaxGeneration(_config, promptTokens),
+            AntiPrompts = AntiPrompts,
+            SamplingPipeline = new DefaultSamplingPipeline { Temperature = _config.Temperature },
+        };
+
+        string lastDisplay = string.Empty;
+        IAsyncEnumerator<string> tokens = _executor!.InferAsync(prompt, inferParams, ct).GetAsyncEnumerator(ct);
+        try
+        {
+            while (true)
             {
-                lastDisplay = display;
-                yield return display;
+                bool contextFull = false;
+                try
+                {
+                    if (!await tokens.MoveNextAsync().ConfigureAwait(false))
+                        break;
+                }
+                catch (LLamaDecodeError decodeError) when (decodeError.ReturnCode == DecodeResult.NoKvSlot)
+                {
+                    contextFull = true;
+                }
+
+                if (contextFull)
+                {
+                    _lastInferenceHitContextLimit = true;
+                    yield break; // caller surfaces the friendly message
+                }
+
+                rawBuffer.Append(tokens.Current);
+                string display = ComputeStreamingDisplay(rawBuffer.ToString());
+                if (display.Length > 0 && display != lastDisplay)
+                {
+                    lastDisplay = display;
+                    yield return display;
+                }
             }
+        }
+        finally
+        {
+            await tokens.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -253,28 +339,25 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
     }
 
     /// <summary>
-    /// Drops the oldest exchanges so system prompt + history + the current message + the
-    /// response all fit within the model's context window. Uses a conservative
-    /// chars-per-token estimate; exact token counts are not worth a tokenizer round-trip here.
+    /// Renders the prompt (system prompt + history + current turn) and drops the oldest history
+    /// exchanges until it fits the context window, using exact token counts from the model's
+    /// tokenizer. The system prompt and current turn are always kept.
     /// </summary>
-    private void TrimHistoryToFit(int currentMessageLength)
+    private string BuildTrimmedPrompt(string modelMessage)
     {
-        int contextChars = (int)_config.ContextSize * EstimatedCharsPerToken;
-        int responseReserveChars = (_config.MaxTokens > 0 ? _config.MaxTokens : 1024) * EstimatedCharsPerToken;
+        // Perf cap: never consider more than the most recent turns (very old ones never fit anyway).
+        if (_history.Count > PromptBudget.MaxConsideredTurns)
+            _history.RemoveRange(0, _history.Count - PromptBudget.MaxConsideredTurns);
 
-        int budget = contextChars
-            - (_config.SystemPrompt?.Length ?? 0)
-            - currentMessageLength
-            - responseReserveChars;
-
-        int historyChars = _history.Sum(turn => turn.Content.Length);
-
-        // History is appended in user/assistant pairs; remove whole exchanges from the front.
-        while (_history.Count >= 2 && historyChars > Math.Max(budget, 0))
+        int budget = PromptBudget.PromptBudgetTokens(_config);
+        string prompt = BuildPrompt(modelMessage);
+        while (_history.Count >= 2 && PromptBudget.CountTokens(_weights!, prompt) > budget)
         {
-            historyChars -= _history[0].Content.Length + _history[1].Content.Length;
-            _history.RemoveRange(0, 2);
+            _history.RemoveRange(0, 2); // drop the oldest user+assistant exchange
+            prompt = BuildPrompt(modelMessage);
         }
+
+        return prompt;
     }
 
     public void ClearHistory()

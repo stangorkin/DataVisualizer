@@ -48,6 +48,18 @@ public static class ChartSpecValidator
             if (yColumn.Type != ColumnType.Number)
                 return ChartSpecValidationResult.Invalid(
                     $"the {request.Aggregation} aggregation needs a numeric Y column, but \"{yColumn.Name}\" is {yColumn.Type}.");
+
+            // Summing or averaging a per-row unique key produces huge meaningless totals that
+            // read like real answers (observed: "15 trillion entries" from summing an event-ID
+            // column). Refuse, and steer toward count — what such requests almost always mean.
+            if (request.Aggregation is Aggregation.Sum or Aggregation.Average &&
+                dataService.IsLikelyIdentifierColumn(yColumn.Name))
+            {
+                return ChartSpecValidationResult.Invalid(
+                    $"\"{yColumn.Name}\" looks like a unique identifier (a different value on every row), " +
+                    $"so {request.Aggregation.ToString().ToLowerInvariant()} of it would be meaningless. " +
+                    "To count rows per group, use the count aggregation instead.");
+            }
         }
 
         var normalized = new ChartSpecRequest
@@ -62,6 +74,8 @@ public static class ChartSpecValidator
             Action = request.Action,
             Page = request.Page.Trim(),
             Filters = NormalizeFilters(request.Filters, schema),
+            Sort = request.Sort,
+            Limit = Math.Max(0, request.Limit),
             Reason = request.Reason.Trim(),
         };
 

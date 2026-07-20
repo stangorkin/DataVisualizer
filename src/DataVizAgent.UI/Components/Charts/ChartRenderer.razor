@@ -1,5 +1,6 @@
 @using ApexCharts
 @using DataVizAgent.Models
+@using DataVizAgent.Services
 
 @if (Spec is not null && Spec.Labels.Length > 0)
 {
@@ -9,7 +10,29 @@
             <h4>@Spec.Title</h4>
         }
 
-        @if (Spec.Type == DataVizAgent.Models.ChartType.Pie)
+        @if (Spec.Type == DataVizAgent.Models.ChartType.Table)
+        {
+            <div class="chart-table-scroll">
+                <table class="chart-table">
+                    <thead>
+                        <tr>
+                            <th>@Spec.XColumn</th>
+                            <th class="chart-table-value">@ValueHeader</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (ChartPoint point in _points)
+                        {
+                            <tr>
+                                <td>@point.Label</td>
+                                <td class="chart-table-value">@point.Value.ToString("#,0.##")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (Spec.Type == DataVizAgent.Models.ChartType.Pie)
         {
             <ApexChart TItem="ChartPoint" Title="@Spec.Title">
                 <ApexPointSeries TItem="ChartPoint"
@@ -65,6 +88,14 @@
             .Select(i => new ChartPoint(Spec.Labels[i], Spec.Values[i]))
             .ToList();
     }
+
+    private string ValueHeader => Spec switch
+    {
+        null => string.Empty,
+        { Aggregation: Aggregation.Count } => "Count",
+        { Aggregation: Aggregation.None } => Spec.YColumn,
+        _ => $"{Spec.Aggregation} of {Spec.YColumn}",
+    };
 
     private sealed record ChartPoint(string Label, double Value);
 }

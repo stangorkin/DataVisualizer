@@ -31,15 +31,19 @@ internal sealed class ChartTools
         AIFunctionFactory.Create(RunDataQuery),
     ];
 
-    [Description("Create a new chart, or update the chart the user currently has selected, from the loaded dataset.")]
+    [Description("Create a new chart, or update the chart the user currently has selected, from the loaded dataset. " +
+                 "For 'top N' requests set limit=N and sort=desc. Use type=table when the user asks for a list or " +
+                 "table of values. When the user asks how many rows or entries each group has, use aggregation=count.")]
     public string CreateOrUpdateChart(
-        [Description("Chart type: bar, line, pie, or scatter.")] string type,
+        [Description("Chart type: bar, line, pie, scatter, or table (a ranked list of label and value rows).")] string type,
         [Description("Short chart title.")] string title,
         [Description("Exact name of the column for the X axis (categories).")] string xColumn,
         [Description("Exact name of the numeric column for the Y axis. Omit for a count aggregation.")] string yColumn = "",
         [Description("Aggregation: none, sum, average, count, min, or max.")] string aggregation = "count",
         [Description("Use 'create' to add a chart, or 'update' to change the selected chart.")] string action = "create",
         [Description("Optional report page name to place the chart on; created if it does not exist.")] string page = "",
+        [Description("Order groups by value: none, asc, or desc. Use desc for 'top N' requests.")] string sort = "none",
+        [Description("Keep only this many groups (0 = all). For 'top 5 countries' set 5.")] int limit = 0,
         [Description("One short sentence explaining why this chart answers the request.")] string reason = "")
     {
         if (_dataService.RowCount == 0)
@@ -54,6 +58,8 @@ internal sealed class ChartTools
             Aggregation = ParseEnum(aggregation, Aggregation.Count),
             Action = ParseEnum(action, ChartAction.Create),
             Page = page ?? string.Empty,
+            Sort = ParseEnum(sort, SortDirection.None),
+            Limit = limit,
             Reason = reason ?? string.Empty,
         };
 

@@ -4,6 +4,7 @@ using System.Text.Json;
 using DataVizAgent.Services;
 using LLama;
 using LLama.Common;
+using LLama.Exceptions;
 using LLama.Native;
 using LLama.Sampling;
 using Microsoft.Extensions.AI;
@@ -52,10 +53,19 @@ internal sealed class LLamaSharpChatClient : IChatClient
     {
         await EnsureExecutorAsync(cancellationToken).ConfigureAwait(false);
 
+        // Trim history to fit and count the prompt exactly, so generation can be capped to the
+        // remaining context window — this is what prevents the llama.cpp NoKvSlot error.
         string prompt = BuildPrompt(messages, options);
+        int promptTokens = PromptBudget.CountTokens(_weights!, prompt);
+        if (!PromptBudget.PromptFits(_config, promptTokens))
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, PromptBudget.ContextTooSmallMessage(_config));
+            yield break;
+        }
+
         InferenceParams inferenceParams = new()
         {
-            MaxTokens = options?.MaxOutputTokens ?? _config.MaxTokens,
+            MaxTokens = PromptBudget.MaxGeneration(_config, promptTokens),
             AntiPrompts = AntiPrompts,
             SamplingPipeline = new DefaultSamplingPipeline
             {
@@ -67,24 +77,55 @@ internal sealed class LLamaSharpChatClient : IChatClient
         var raw = new StringBuilder();
         int emittedDisplayLength = 0;
 
-        await foreach (string token in _executor!.InferAsync(prompt, inferenceParams, cancellationToken).ConfigureAwait(false))
+        IAsyncEnumerator<string> tokens = _executor!.InferAsync(prompt, inferenceParams, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        try
         {
-            raw.Append(token);
-
-            // Stream the prose portion (reasoning removed, everything before a fenced block) live;
-            // the tool-call JSON itself is held back and surfaced as a FunctionCallContent at the end.
-            string display = ComputeDisplayText(raw.ToString());
-            if (display.Length > emittedDisplayLength)
+            while (true)
             {
-                yield return new ChatResponseUpdate(ChatRole.Assistant, display[emittedDisplayLength..]);
-                emittedDisplayLength = display.Length;
+                bool contextFull = false;
+                try
+                {
+                    if (!await tokens.MoveNextAsync().ConfigureAwait(false))
+                        break;
+                }
+                catch (LLamaDecodeError decodeError) when (decodeError.ReturnCode == DecodeResult.NoKvSlot)
+                {
+                    contextFull = true; // belt-and-suspenders: budgeting should already prevent this
+                }
+
+                if (contextFull)
+                {
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, PromptBudget.ContextFullMessage);
+                    yield break;
+                }
+
+                raw.Append(tokens.Current);
+
+                // Stream the prose portion (reasoning removed, everything before a fenced block) live;
+                // the tool-call JSON itself is held back and surfaced as a FunctionCallContent at the end.
+                string display = ComputeDisplayText(raw.ToString());
+                if (display.Length > emittedDisplayLength)
+                {
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, display[emittedDisplayLength..]);
+                    emittedDisplayLength = display.Length;
+                }
             }
+        }
+        finally
+        {
+            await tokens.DisposeAsync().ConfigureAwait(false);
         }
 
         if (TryParseToolCall(raw.ToString(), out string toolName, out IDictionary<string, object?> arguments))
         {
             var call = new FunctionCallContent(Guid.NewGuid().ToString("N"), toolName, arguments);
             yield return new ChatResponseUpdate(ChatRole.Assistant, [call]);
+        }
+        else if (emittedDisplayLength == 0 && raw.Length > 0 && ReasoningFilter.StripForFinal(raw.ToString()).Length == 0)
+        {
+            // The whole reply was hidden reasoning cut off at the token cap — say so rather
+            // than ending a long wait with silence.
+            yield return new ChatResponseUpdate(ChatRole.Assistant, PromptBudget.ThinkingExhaustedMessage);
         }
     }
 
@@ -148,14 +189,38 @@ internal sealed class LLamaSharpChatClient : IChatClient
     }
 
     /// <summary>
-    /// Renders the conversation into a single prompt using the model's own chat template.
-    /// All system messages plus the synthesized tool instructions are merged into one system
-    /// turn; tool-call and tool-result content is rendered back as text the model can read.
+    /// Renders the conversation into a single prompt using the model's own chat template, dropping the
+    /// oldest conversation turns until the prompt fits the context window. The system block (system
+    /// messages + agent instructions + tool schemas) is fixed and never trimmed; only the back-and-forth
+    /// history shrinks, so the model always keeps the dataset context and the latest user turn.
     /// </summary>
     private string BuildPrompt(IEnumerable<ChatMessage> messages, ChatOptions? options)
     {
         List<ChatMessage> messageList = [.. messages];
+        string systemBlock = BuildSystemBlock(messageList, options);
+        if (_config.DisableThinking)
+            systemBlock = $"{systemBlock}\n/no_think".Trim();
+        List<(string Role, string Text)> turns = BuildTurns(messageList);
 
+        // Cap the turns considered so trimming stays cheap on very long sessions.
+        if (turns.Count > PromptBudget.MaxConsideredTurns)
+            turns = turns.GetRange(turns.Count - PromptBudget.MaxConsideredTurns, PromptBudget.MaxConsideredTurns);
+
+        int budget = PromptBudget.PromptBudgetTokens(_config);
+        int start = 0;
+        string prompt = RenderTemplate(systemBlock, turns, start);
+        while (start < turns.Count - 1 && PromptBudget.CountTokens(_weights!, prompt) > budget)
+        {
+            start++; // drop the oldest remaining turn and re-render
+            prompt = RenderTemplate(systemBlock, turns, start);
+        }
+
+        return prompt;
+    }
+
+    /// <summary>The fixed preamble: agent instructions, tool schemas, and system messages, merged.</summary>
+    private static string BuildSystemBlock(List<ChatMessage> messages, ChatOptions? options)
+    {
         var systemParts = new List<string>();
 
         // Agent-layer instructions (and any AIContextProvider output) arrive via ChatOptions.Instructions
@@ -167,19 +232,21 @@ internal sealed class LLamaSharpChatClient : IChatClient
         if (toolInstructions.Length > 0)
             systemParts.Add(toolInstructions);
 
-        foreach (ChatMessage message in messageList.Where(m => m.Role == ChatRole.System))
+        foreach (ChatMessage message in messages.Where(m => m.Role == ChatRole.System))
         {
             string text = RenderContent(message);
             if (!string.IsNullOrWhiteSpace(text))
                 systemParts.Add(text);
         }
 
-        LLamaTemplate template = new(_weights!, strict: false) { AddAssistant = true };
+        return string.Join("\n\n", systemParts);
+    }
 
-        if (systemParts.Count > 0)
-            template.Add("system", string.Join("\n\n", systemParts));
-
-        foreach (ChatMessage message in messageList.Where(m => m.Role != ChatRole.System))
+    /// <summary>The trimmable conversation turns, rendered to text (tool-call/result folded into user turns).</summary>
+    private static List<(string Role, string Text)> BuildTurns(List<ChatMessage> messages)
+    {
+        var turns = new List<(string, string)>();
+        foreach (ChatMessage message in messages.Where(m => m.Role != ChatRole.System))
         {
             string text = RenderContent(message);
             if (string.IsNullOrWhiteSpace(text))
@@ -188,8 +255,21 @@ internal sealed class LLamaSharpChatClient : IChatClient
             // GGUF templates rendered with strict:false may not know a "tool" role; fold
             // tool results into a user turn (the content already carries a clear marker).
             string role = message.Role == ChatRole.Assistant ? "assistant" : "user";
-            template.Add(role, text);
+            turns.Add((role, text));
         }
+
+        return turns;
+    }
+
+    private string RenderTemplate(string systemBlock, List<(string Role, string Text)> turns, int start)
+    {
+        LLamaTemplate template = new(_weights!, strict: false) { AddAssistant = true };
+
+        if (systemBlock.Length > 0)
+            template.Add("system", systemBlock);
+
+        for (int i = start; i < turns.Count; i++)
+            template.Add(turns[i].Role, turns[i].Text);
 
         return Encoding.UTF8.GetString(template.Apply());
     }

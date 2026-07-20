@@ -33,6 +33,7 @@ public static class ServiceCollectionExtensions
             SystemPrompt = llamaSection["SystemPrompt"],
             ResponseStartMarker = llamaSection["ResponseStartMarker"],
             ConstrainToolCalls = !bool.TryParse(llamaSection["ConstrainToolCalls"], out bool constrain) || constrain,
+            DisableThinking = bool.TryParse(llamaSection["DisableThinking"], out bool noThink) && noThink,
         };
 
         services.AddSingleton<IDatasetPersistenceService, DatasetPersistenceService>();
@@ -64,8 +65,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISessionCommandBus, SessionCommandBus>();
 
         // Browser dialogs are the fallback; a host (e.g. the WPF desktop shell) provides its
-        // own ISessionFileDialogService by registering it BEFORE calling AddDataVizAgentCore.
+        // own dialog services by registering them BEFORE calling AddDataVizAgentCore.
         services.TryAddSingleton<ISessionFileDialogService, BrowserSessionFileDialogService>();
+        services.TryAddSingleton<IDataFileDialogService, BrowserDataFileDialogService>();
 
         return services;
     }

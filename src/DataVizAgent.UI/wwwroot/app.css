@@ -265,9 +265,28 @@ body {
 
 /* Data loader */
 .data-loader { padding: 1rem; }
-.schema-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); margin-top: .5rem; }
+.schema-scroll {
+    max-height: 40vh;
+    overflow-y: auto;
+    margin-top: .5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+}
+.schema-scroll::-webkit-scrollbar { width: 8px; }
+.schema-scroll::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 999px; }
+.schema-scroll::-webkit-scrollbar-track { background: transparent; }
+.schema-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .schema-table th, .schema-table td { border: 1px solid var(--color-border); padding: .3rem .5rem; text-align: left; }
-.schema-table th { background: var(--color-bg); font-weight: 600; color: var(--color-text-muted); }
+.schema-table th {
+    background: var(--color-bg);
+    font-weight: 600;
+    color: var(--color-text-muted);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
 .dataset-info { font-size: .9rem; margin: .25rem 0; }
 .file-input-label { margin-top: .5rem; }
 
@@ -303,7 +322,21 @@ body {
 .error { color: var(--color-danger); font-size: var(--text-sm); }
 
 /* Chat panel */
-.chat-panel { flex: 1; display: flex; flex-direction: column; padding: 1rem; overflow: hidden; }
+.chat-panel { flex: 1; display: flex; flex-direction: column; padding: 1rem; overflow: hidden; min-height: 220px; }
+.chat-header { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.model-pill {
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    padding: .15rem .55rem;
+    max-width: 55%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.thinking-elapsed { margin-left: .5rem; font-size: var(--text-xs); color: var(--color-text-subtle); }
 .chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: .5rem; margin-bottom: .75rem; }
 .chat-message {
     padding: .5rem .75rem;
@@ -465,6 +498,26 @@ body {
 .chart-frame-filters { margin: .2rem 1rem 0; font-size: .8rem; font-weight: 600; color: var(--color-primary-text); }
 .chart-frame-reason { margin: .35rem 1rem .85rem; font-size: .82rem; font-style: italic; color: var(--color-text-muted); }
 .chart-frame-note { margin: .2rem 1rem 0; font-size: .8rem; color: var(--color-warn); }
+.chart-table-scroll {
+    max-height: 320px;
+    overflow-y: auto;
+    margin: .25rem 1rem .5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+}
+.chart-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.chart-table th, .chart-table td { border-bottom: 1px solid var(--color-border); padding: .35rem .6rem; text-align: left; }
+.chart-table th {
+    background: var(--color-bg);
+    font-weight: 600;
+    color: var(--color-text-muted);
+    position: sticky;
+    top: 0;
+}
+.chart-table th.chart-table-value, .chart-table td.chart-table-value { text-align: right; font-variant-numeric: tabular-nums; }
+.chart-table tbody tr:last-child td { border-bottom: none; }
 .chart-select-button {
     background: var(--color-surface);
     border-color: var(--color-border-strong);

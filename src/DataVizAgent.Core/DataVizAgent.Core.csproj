@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <PackageReference Include="CsvHelper" />
+    <PackageReference Include="DuckDB.NET.Data.Full" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Agents.AI" />
     <PackageReference Include="LLamaSharp" />
@@ -28,6 +29,8 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <!-- Direct reference solely to lift the transitive SQLitePCLRaw above the vulnerable version -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
     <PackageReference Include="Microsoft.Data.SqlClient" />
     <PackageReference Include="Npgsql" />
   </ItemGroup>

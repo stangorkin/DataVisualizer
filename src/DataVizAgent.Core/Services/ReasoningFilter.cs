@@ -25,7 +25,9 @@ internal static partial class ReasoningFilter
 
     /// <summary>
     /// The final answer: everything after the last answer-start marker, with any remaining
-    /// reasoning block removed. Plain output (no markers) is returned unchanged.
+    /// reasoning block removed. A reasoning block left unclosed (generation cut off at the
+    /// token cap mid-think) is dropped entirely rather than shown raw. Plain output (no
+    /// markers) is returned unchanged.
     /// </summary>
     public static string StripForFinal(string text)
     {
@@ -33,7 +35,16 @@ internal static partial class ReasoningFilter
             return text;
 
         int answerStart = LastAnswerStart(text);
-        string result = answerStart >= 0 ? text[answerStart..] : ThinkBlockRegex().Replace(text, string.Empty);
+        if (answerStart >= 0)
+            return text[answerStart..].Trim();
+
+        string result = ThinkBlockRegex().Replace(text, string.Empty);
+
+        // Unclosed reasoning tail: everything from the opener onward never became an answer.
+        Match open = ReasoningOpenRegex().Match(result);
+        if (open.Success)
+            result = result[..open.Index];
+
         return result.Trim();
     }
 

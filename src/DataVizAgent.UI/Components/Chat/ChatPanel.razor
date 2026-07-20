@@ -1,9 +1,13 @@
 @using DataVizAgent.Services
 @inject IChatService ChatService
+@inject LlamaConfig LlamaConfig
 @implements IDisposable
 
 <div class="chat-panel">
-    <h3>Chat</h3>
+    <div class="chat-header">
+        <h3>Chat</h3>
+        <span class="model-pill" title="@(LlamaConfig.ModelPath ?? "No model configured")">@ModelLabel</span>
+    </div>
     <div class="chat-messages" @ref="_messageContainer">
         @foreach (var msg in _messages)
         {
@@ -13,6 +17,7 @@
         {
             <div class="chat-message assistant thinking">
                 <span class="thinking-dots"><span></span><span></span><span></span></span>
+                <span class="thinking-elapsed">@ThinkingElapsedLabel</span>
             </div>
         }
     </div>
@@ -76,12 +81,44 @@
         });
     }
 
+    private DateTime _thinkingSince;
+
+    private string ModelLabel
+    {
+        get
+        {
+            string? path = LlamaConfig.ModelPath;
+            return string.IsNullOrWhiteSpace(path) ? "no model" : System.IO.Path.GetFileNameWithoutExtension(path);
+        }
+    }
+
+    private string ThinkingElapsedLabel
+    {
+        get
+        {
+            int seconds = (int)(DateTime.UtcNow - _thinkingSince).TotalSeconds;
+            return seconds >= 60 ? $"{seconds / 60}m {seconds % 60}s" : $"{seconds}s";
+        }
+    }
+
+    /// <summary>Re-renders once a second while the model works, so the elapsed label ticks.</summary>
+    private async Task TickWhileThinkingAsync()
+    {
+        while (_isThinking)
+        {
+            await Task.Delay(1000);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
     private async Task SendAsync()
     {
         if (string.IsNullOrWhiteSpace(_input) || _isThinking) return;
         string text = _input.Trim();
         _input = string.Empty;
         _isThinking = true;
+        _thinkingSince = DateTime.UtcNow;
+        _ = TickWhileThinkingAsync();
         _messages.Add(new("user", text));
         _messages.Add(new("assistant", string.Empty));
         await InvokeAsync(StateHasChanged);

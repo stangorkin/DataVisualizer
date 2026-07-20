@@ -34,6 +34,7 @@ public partial class App : Application
             sp.GetRequiredService<DesktopSessionFileDialogService>());
         services.AddSingleton<ISessionFileDialogService>(sp =>
             sp.GetRequiredService<DesktopSessionFileDialogService>());
+        services.AddSingleton<IDataFileDialogService, DesktopDataFileDialogService>();
         services.AddDataVizAgentCore(configuration);
         services.AddTransient<MainWindow>();
 

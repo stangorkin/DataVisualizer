@@ -23,4 +23,11 @@ public sealed class LlamaConfig
     /// in the response is stripped. Useful for thinking models that emit reasoning before answering.
     /// </summary>
     public string? ResponseStartMarker { get; init; }
+
+    /// <summary>
+    /// When true, appends the "/no_think" soft switch to the system prompt, which Qwen3-family
+    /// models honor by skipping their hidden reasoning phase — much faster replies on CPU at
+    /// some quality cost. Harmless for models that don't recognize it.
+    /// </summary>
+    public bool DisableThinking { get; init; }
 }

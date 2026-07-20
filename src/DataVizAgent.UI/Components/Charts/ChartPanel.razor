@@ -56,6 +56,10 @@
                 {
                     <p class="chart-frame-filters">Filtered: @string.Join(", ", filters.Select(f => f.Describe()))</p>
                 }
+                @if (visual.Chart.Limit > 0)
+                {
+                    <p class="chart-frame-filters">@($"Top {visual.Chart.Limit} by value{(visual.Chart.Sort == SortDirection.Asc ? " (lowest first)" : "")}")</p>
+                }
                 @if (visual.Chart.IgnoredValueCount > 0)
                 {
                     <p class="chart-frame-note">@FormatIgnoredNote(visual.Chart)</p>

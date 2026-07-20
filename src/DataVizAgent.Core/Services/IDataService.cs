@@ -10,6 +10,13 @@ public interface IDataService
 {
     event Action? Changed;
 
+    /// <summary>
+    /// Attaches a data file where it lives on disk (CSV/TSV/Parquet become a zero-copy view;
+    /// XLSX/JSON are parsed and materialized). Preferred for large files — nothing is copied
+    /// into application memory.
+    /// </summary>
+    Task LoadFileAsync(string path, CancellationToken cancellationToken = default);
+
     Task LoadCsvAsync(string path, CancellationToken cancellationToken = default);
     Task LoadJsonAsync(string path, CancellationToken cancellationToken = default);
     Task LoadCsvFromStreamAsync(Stream stream, string name, CancellationToken cancellationToken = default);
@@ -17,11 +24,22 @@ public interface IDataService
     Task LoadJsonFromStreamAsync(Stream stream, string name, CancellationToken cancellationToken = default);
 
     string? DatasetName { get; }
+
+    /// <summary>Path of the source file when the dataset is queried in place, else null.</summary>
+    string? SourcePath { get; }
+
     int RowCount { get; }
 
     IReadOnlyList<ColumnInfo> GetSchema();
     string GetDataSummary();
     string GetColumnProfile();
+
+    /// <summary>
+    /// True when the column looks like a per-row unique key (integer values, distinct on nearly
+    /// every row). Summing or averaging such a column is essentially never meaningful — chart
+    /// validation refuses it and steers toward count.
+    /// </summary>
+    bool IsLikelyIdentifierColumn(string columnName);
     PersistedDatasetSnapshot? CreateSnapshot();
     void LoadSnapshot(PersistedDatasetSnapshot snapshot);
     void LoadRows(string name, string[] headers, List<Dictionary<string, object?>> rows);

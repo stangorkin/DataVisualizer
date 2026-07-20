@@ -162,26 +162,31 @@ fall back to prompted-only automatically.
 
 ## 4. Data engine
 
-[`DataService`](../src/DataVizAgent.Core/Services/DataService.cs) holds the dataset
-in memory as `List<Dictionary<string, object?>>` (one dictionary per row).
+[`DataService`](../src/DataVizAgent.Core/Services/DataService.cs) is backed by an embedded
+**DuckDB** instance — data is queried where it lives instead of being loaded into .NET memory:
 
-- **Ingest**: CSV (CsvHelper), JSON/NDJSON (`System.Text.Json`), XLSX (read as the ZIP+XML
-  it really is — including detection of XLSX files masquerading as `.csv` via the `PK`
-  magic bytes, and CSV-inside-a-single-column sheets).
-- **Type inference**: samples 20 rows/column; a column is `Number` when ≥ 50 % of non-empty
-  samples parse (tolerating `$1,299.99`, `-$5`, `15%`); `Date` when all samples parse as dates.
-- **Aggregation** (`QuerySeriesWithStats`): filter → group by X → aggregate Y
-  (Sum/Average/Count/Min/Max). Non-numeric cells are **skipped, not coerced to 0**, and the
-  skip count is reported (Power BI-style transparency; blanks are silently ignored like DAX).
+- **Files opened by path** (CSV/TSV/Parquet, via the desktop's native file picker) become a
+  **view over the file**: zero-copy, no size ceiling, DuckDB's sniffer handles delimiters,
+  quoting, and headerless files (e.g. GDELT exports). The autosave/session snapshot stores a
+  *path reference* and re-attaches the file on restore.
+- **Everything else materializes into a DuckDB table** (columnar, still off the .NET heap):
+  browser uploads, XLSX (read as the ZIP+XML it really is — including XLSX masquerading as
+  `.csv`, detected via the `PK` magic bytes, and CSV-inside-a-single-column sheets), JSON/NDJSON,
+  database imports, and legacy row-embedding session snapshots.
+- **All analysis compiles to SQL** — schema inference, per-column profiles, filters
+  (parameterized), and aggregation. The tolerant numeric semantics are preserved in SQL:
+  a text column is `Number` when ≥ 50 % of sampled non-empty values parse (tolerating
+  `$1,299.99`, `-$5`, `15%`); non-numeric cells are **skipped, not coerced to 0**, and the skip
+  count is reported (Power BI-style transparency; blanks are silently ignored like DAX).
 - **Database import**: one ADO.NET code path over three providers, guarded by
   [`ReadOnlyQueryGuard`](../src/DataVizAgent.Core/Services/ReadOnlyQueryGuard.cs)
   (single `SELECT`/`WITH…SELECT`; literal/comment-aware `;` detection) plus read-only
   connection modes where the provider supports them (SQLite `Mode=ReadOnly`, PostgreSQL
-  `default_transaction_read_only=on`).
+  `default_transaction_read_only=on`). Imported rows land in a DuckDB table.
 
-> **Known scale ceiling**: the dictionary-per-row store and full-scan LINQ aggregation are
-> comfortable to ~10⁵ rows. The planned upgrade path is an embedded analytical store
-> (e.g. DuckDB) behind the same `IDataService` seam.
+> Only the dataset's *summary* (schema + column profile + 5 sample rows) is ever sent to the
+> model; row data stays in DuckDB and is only touched by tool-executed SQL. Context pressure
+> therefore scales with column count, not row count.
 
 ---
 

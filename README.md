@@ -2,7 +2,7 @@
 
 A local-first, agentic data visualization desktop app powered by a GGUF language model running entirely on your machine — no cloud, no API keys.
 
-Load a CSV, Excel, JSON file, or connect to a database, then chat with the agent to create and edit charts, answer analytical questions, and explore your data.
+Load a CSV, TSV, Parquet, Excel, or JSON file — or connect to a database — then chat with the agent to create and edit charts, answer analytical questions, and explore your data. Files opened on the desktop are **queried in place** by an embedded DuckDB engine rather than loaded into memory, so large datasets (millions of rows) work on ordinary hardware.
 
 ---
 
@@ -127,9 +127,10 @@ The app resolves the model in this order:
 | `LLamaSharp:Pipeline` | `legacy` | Agent engine: `legacy` (hand-written response parser), `tools` (Microsoft.Extensions.AI function-calling pipeline), or `agent` (Microsoft Agent Framework, with conversation that persists into the session file). See [Agent pipeline](#agent-pipeline-experimental). |
 | `LLamaSharp:ConstrainToolCalls` | `true` | `tools` pipeline only: constrain tool-call output with a GBNF grammar generated from the tool schemas, so the model cannot emit a malformed call. Set `false` to compare against prompted-only tool calling. |
 | `LLamaSharp:GpuLayerCount` | `0` | Layers to offload to GPU (CUDA only) |
-| `LLamaSharp:ContextSize` | `4096` | Model context window in tokens |
+| `LLamaSharp:ContextSize` | `8192` | Model context window in tokens. Larger windows fit wider datasets and longer chats but use more RAM (KV cache grows linearly — roughly an extra ~1 GB per 8k tokens on an 8B model). |
 | `LLamaSharp:Temperature` | `0.7` | Sampling temperature |
-| `LLamaSharp:MaxTokens` | `-1` | Max tokens per response (`-1` = unlimited) |
+| `LLamaSharp:MaxTokens` | `1024` | Max tokens per response. Thinking models spend this on hidden reasoning too, so it bounds worst-case reply time on CPU (`-1` = fill the remaining context window). |
+| `LLamaSharp:DisableThinking` | `true` | Appends Qwen3's `/no_think` soft switch — skips hidden reasoning, so replies are much faster on CPU and the whole `MaxTokens` budget goes to the visible answer instead of being spent thinking. Harmless on non-Qwen models. Set `false` to let thinking models reason (slower, and long thinking can truncate the answer). |
 
 ---
 

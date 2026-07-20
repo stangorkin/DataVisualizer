@@ -20,10 +20,15 @@ public static partial class ChartSpecParser
     [GeneratedRegex(@"```(?<lang>[a-zA-Z]*)\s*(?<body>\{.*?\})\s*```", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
     private static partial Regex FencedJsonBlockRegex();
 
+    // Matches a complete fenced block explicitly tagged as a tool call, whether or not its body
+    // is valid JSON — these are never chat prose and must never be shown to the user raw.
+    [GeneratedRegex(@"```(chart|query)\b.*?```", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex TaggedToolBlockRegex();
+
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        Converters = { new TolerantEnumConverterFactory() }
     };
 
     /// <summary>
@@ -49,8 +54,12 @@ public static partial class ChartSpecParser
         if (string.IsNullOrWhiteSpace(text))
             return string.Empty;
 
-        // Remove fenced blocks that actually contained a chart request.
-        string stripped = FencedJsonBlockRegex().Replace(text, match =>
+        // Tool-tagged fences are always tool calls, never prose — drop them even when their JSON
+        // is malformed or unsupported, so a bad block can never leak into chat as raw text.
+        string stripped = TaggedToolBlockRegex().Replace(text, string.Empty);
+
+        // Remove other fenced blocks (```json …) only when they actually contain a chart request.
+        stripped = FencedJsonBlockRegex().Replace(stripped, match =>
             TryDeserialize(match.Groups["body"].Value, out var request) && request?.HasChartFields == true
                 ? string.Empty
                 : match.Value);
@@ -64,6 +73,41 @@ public static partial class ChartSpecParser
 
         return stripped.Trim();
     }
+
+    /// <summary>
+    /// Removes a trailing fenced block that was opened but never closed — the signature of a
+    /// generation cut off by its token cap mid tool call. Without this, the half-written JSON
+    /// fragment would be shown to the user as chat text. Returns <c>true</c> when a fragment was
+    /// removed; <paramref name="cleaned"/> then holds only the text before the dangling fence.
+    /// </summary>
+    public static bool TryStripUnclosedFencedBlock(string text, out string cleaned)
+    {
+        cleaned = text;
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        int fenceCount = 0;
+        int lastFence = -1;
+        int index = 0;
+        while ((index = text.IndexOf("```", index, StringComparison.Ordinal)) >= 0)
+        {
+            fenceCount++;
+            lastFence = index;
+            index += 3;
+        }
+
+        // An even fence count means every block closed; odd means the last fence opened one
+        // that never ended before generation stopped.
+        if (fenceCount % 2 == 0)
+            return false;
+
+        cleaned = text[..lastFence].TrimEnd('`').Trim();
+        return true;
+    }
+
+    /// <summary>True when the text contains a complete fenced <c>```chart</c> / <c>```query</c> block, parseable or not.</summary>
+    public static bool ContainsToolBlock(string text) =>
+        !string.IsNullOrEmpty(text) && TaggedToolBlockRegex().IsMatch(text);
 
     private static IEnumerable<string> EnumerateCandidates(string text)
     {
@@ -151,6 +195,12 @@ public sealed class ChartSpecRequest
 
     /// <summary>Optional row-level filters applied before aggregation.</summary>
     public List<DataFilter> Filters { get; set; } = [];
+
+    /// <summary>Optional ordering of the computed groups by value.</summary>
+    public SortDirection Sort { get; set; } = SortDirection.None;
+
+    /// <summary>Optional cap on the number of groups shown (0 = all). "Top N" requests set this.</summary>
+    public int Limit { get; set; }
 
     /// <summary>Optional one-line rationale from the agent explaining the chart choice.</summary>
     public string Reason { get; set; } = string.Empty;

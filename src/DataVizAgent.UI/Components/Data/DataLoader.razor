@@ -1,6 +1,7 @@
 @using DataVizAgent.Services
 @inject IDataService DataService
 @inject IReportSessionService ReportSession
+@inject IDataFileDialogService DataFileDialog
 @implements IDisposable
 
 <div class="data-loader">
@@ -9,28 +10,43 @@
     @if (DataService.RowCount > 0)
     {
         <p class="dataset-info">
-            <strong>@DataService.DatasetName</strong> — @DataService.RowCount rows
+            <strong>@DataService.DatasetName</strong> — @DataService.RowCount.ToString("N0") rows
+            @if (!string.IsNullOrEmpty(DataService.SourcePath))
+            {
+                <span class="hint" title="@DataService.SourcePath"> (queried in place)</span>
+            }
         </p>
-        <table class="schema-table">
-            <thead><tr><th>Column</th><th>Type</th></tr></thead>
-            <tbody>
-                @foreach (var col in DataService.GetSchema())
-                {
-                    <tr><td>@col.Name</td><td>@col.Type.ToString().ToLowerInvariant()</td></tr>
-                }
-            </tbody>
-        </table>
+        <div class="schema-scroll">
+            <table class="schema-table">
+                <thead><tr><th>Column</th><th>Type</th></tr></thead>
+                <tbody>
+                    @foreach (var col in DataService.GetSchema())
+                    {
+                        <tr><td>@col.Name</td><td>@col.Type.ToString().ToLowerInvariant()</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
     }
     else
     {
-        <p class="hint">No dataset loaded. Upload a CSV, Excel, or JSON file below.</p>
+        <p class="hint">No dataset loaded. Open a CSV, TSV, Parquet, Excel, or JSON file below.</p>
     }
 
-    <label for="dataset-file-input" class="secondary-button file-input-label">
-        @(DataService.RowCount > 0 ? "Replace file…" : "Choose file…")
-    </label>
-    <InputFile id="dataset-file-input" @key="_inputKey" OnChange="OnFileSelected"
-               accept=".csv,.xlsx,.json,.ndjson" class="session-file-input" />
+    @if (DataFileDialog.UsesNativeDialogs)
+    {
+        <button type="button" class="secondary-button file-input-label" @onclick="OpenFromDialogAsync">
+            @(DataService.RowCount > 0 ? "Replace data file…" : "Open data file…")
+        </button>
+    }
+    else
+    {
+        <label for="dataset-file-input" class="secondary-button file-input-label">
+            @(DataService.RowCount > 0 ? "Replace file…" : "Choose file…")
+        </label>
+        <InputFile id="dataset-file-input" @key="_inputKey" OnChange="OnFileSelected"
+                   accept=".csv,.tsv,.xlsx,.json,.ndjson" class="session-file-input" />
+    }
 
     @if (!string.IsNullOrEmpty(_errorMessage))
     {
@@ -43,6 +59,28 @@
 @code {
     private string? _errorMessage;
     private string _inputKey = "initial";
+
+    private async Task OpenFromDialogAsync()
+    {
+        _errorMessage = null;
+
+        string? path = await DataFileDialog.PickDataFileAsync();
+        if (path is null)
+            return;
+
+        try
+        {
+            // Attached in place: CSV/TSV/Parquet stream from disk with no size limit.
+            await DataService.LoadFileAsync(path);
+            ReportSession.StartNewReport(DataService.DatasetName, BuildReportTitle(DataService.DatasetName));
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
 
     protected override void OnInitialized()
     {

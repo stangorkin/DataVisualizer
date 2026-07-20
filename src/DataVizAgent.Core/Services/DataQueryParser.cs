@@ -33,7 +33,7 @@ public static partial class DataQueryParser
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        Converters = { new TolerantEnumConverterFactory() }
     };
 
     public static DataQueryRequest? TryParse(string responseText)

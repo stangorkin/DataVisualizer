@@ -14,6 +14,9 @@ public class ReasoningFilterTests
     [InlineData("Just a plain answer.", "Just a plain answer.")]
     // think block embedded with no explicit answer marker after a stray prefix
     [InlineData("<think>hidden</think>Visible.", "Visible.")]
+    // reasoning cut off at the token cap before closing — dropped, not shown raw
+    [InlineData("<think>endless reasoning that never closes", "")]
+    [InlineData("Intro text <think>then reasoning cut off", "Intro text")]
     public void StripForFinal_RemovesReasoning(string input, string expected)
     {
         Assert.Equal(expected, ReasoningFilter.StripForFinal(input));

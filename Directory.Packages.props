@@ -27,12 +27,16 @@
     <PackageVersion Include="Blazor-ApexCharts"                                       Version="6.1.0" />
     <!-- CSV parsing -->
     <PackageVersion Include="CsvHelper"                                               Version="33.0.1" />
+    <!-- Embedded analytical engine: datasets are queried in place (views over files) -->
+    <PackageVersion Include="DuckDB.NET.Data.Full"                                    Version="1.5.3" />
     <!-- Testing -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk"                                  Version="17.12.0" />
     <PackageVersion Include="xunit"                                                   Version="2.9.2" />
     <PackageVersion Include="xunit.runner.visualstudio"                               Version="2.8.2" />
     <!-- Database drivers -->
-    <PackageVersion Include="Microsoft.Data.Sqlite"                                   Version="9.0.5" />
+    <PackageVersion Include="Microsoft.Data.Sqlite"                                   Version="10.0.2" />
+    <!-- Transitive pin: 2.1.12 fixes GHSA-2m69-gcr7-jv3q (Microsoft.Data.Sqlite still pulls 2.1.11) -->
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3"                              Version="2.1.12" />
     <PackageVersion Include="Microsoft.Data.SqlClient"                                Version="6.0.2" />
     <PackageVersion Include="Npgsql"                                                  Version="9.0.4" />
   </ItemGroup>
