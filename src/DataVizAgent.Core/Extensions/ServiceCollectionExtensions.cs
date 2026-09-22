@@ -48,6 +48,7 @@ public static class ServiceCollectionExtensions
         // by streaming + cancellation, not a request clock.
         services.AddSingleton(_ => new HttpClient { Timeout = Timeout.InfiniteTimeSpan });
         services.AddSingleton<IModelDownloadService, ModelDownloadService>();
+        services.AddSingleton<IModelManagerService, ModelManagerService>();
 
         // Pipeline selection (A/B):
         //   "agent"  → Microsoft Agent Framework (ChatClientAgent + serializable session memory)
@@ -74,30 +75,43 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Resolves the GGUF model path with the following priority:
-    ///   1. The value from appsettings.json (absolute or relative to the exe). It may be a
-    ///      .gguf file or a folder, in which case the first *.gguf inside is used — this is
-    ///      what makes the default "models/" setting work.
-    ///   2. The LLAMASHARP_MODEL_PATH environment variable (file or folder, likewise).
-    ///   3. The first *.gguf file found in a "models" folder next to the executable.
+    ///   1. A config value that names a concrete .gguf file (an explicit override).
+    ///   2. The model last chosen with the in-app switcher, when that file still exists.
+    ///   3. The config value as a folder (the default "models/") — first *.gguf inside.
+    ///   4. The LLAMASHARP_MODEL_PATH environment variable (file or folder).
+    ///   5. The first *.gguf file found in a "models" folder next to the executable.
     /// Returns null when no model is found; <see cref="ChatService"/> surfaces a friendly error.
     /// </summary>
     private static string? ResolveModelPath(string? configured)
     {
         string baseDir = AppContext.BaseDirectory;
 
-        // 1: value from config (absolute or relative to exe)
+        // 1: a config value naming a concrete file is an explicit override
+        string? configuredAbs = null;
         if (!string.IsNullOrWhiteSpace(configured))
         {
-            string abs = Path.IsPathRooted(configured)
+            configuredAbs = Path.IsPathRooted(configured)
                 ? configured
                 : Path.GetFullPath(Path.Combine(baseDir, configured));
 
-            string? fromConfig = ResolveFileOrFolder(abs);
+            if (File.Exists(configuredAbs))
+                return configuredAbs;
+        }
+
+        // 2: the user's persisted choice from the in-app model switcher
+        string? selected = ModelSelectionStore.TryLoad();
+        if (!string.IsNullOrWhiteSpace(selected) && File.Exists(selected))
+            return selected;
+
+        // 3: config value as a folder — first *.gguf inside (makes the default "models/" work)
+        if (configuredAbs is not null)
+        {
+            string? fromConfig = ResolveFileOrFolder(configuredAbs);
             if (fromConfig is not null)
                 return fromConfig;
         }
 
-        // 2: environment variable
+        // 4: environment variable
         string? envPath = Environment.GetEnvironmentVariable("LLAMASHARP_MODEL_PATH");
         if (!string.IsNullOrWhiteSpace(envPath))
         {
@@ -106,7 +120,7 @@ public static class ServiceCollectionExtensions
                 return fromEnv;
         }
 
-        // 3: first *.gguf in a "models" subfolder next to the exe
+        // 5: first *.gguf in a "models" subfolder next to the exe
         return ResolveFileOrFolder(Path.Combine(baseDir, "models"));
     }
 

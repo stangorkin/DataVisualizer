@@ -26,6 +26,10 @@ public class SessionConversationPersistenceTests
 
         public void ClearHistory() => ClearHistoryCalled = true;
 
+        public void RequestModelReload()
+        {
+        }
+
         public Task<JsonElement?> ExportConversationAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(ConversationToExport);
 

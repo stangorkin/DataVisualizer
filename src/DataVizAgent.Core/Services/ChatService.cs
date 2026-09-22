@@ -37,6 +37,9 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
     /// <summary>Set when the last inference stopped because the context window filled.</summary>
     private bool _lastInferenceHitContextLimit;
 
+    /// <summary>Set when the active model changed; honored (dispose + reload) before the next message.</summary>
+    private volatile bool _modelReloadRequested;
+
     public event Action<ChartSpecResult>? OnChartSpec;
     public event Action? HistoryCleared;
 
@@ -47,13 +50,26 @@ internal sealed class ChatService : IChatService, IAsyncDisposable
         _chartContext = chartContext ?? throw new ArgumentNullException(nameof(chartContext));
     }
 
+    public void RequestModelReload() => _modelReloadRequested = true;
+
     private async Task<string?> EnsureExecutorAsync()
     {
-        if (_executor is not null) return null;
+        if (_executor is not null && !_modelReloadRequested) return null;
 
         await _loadLock.WaitAsync();
         try
         {
+            if (_modelReloadRequested)
+            {
+                // Deferred model switch: this runs before inference starts, so nothing is
+                // disposed mid-reply. History is kept and re-renders on the new model's template.
+                _executor = null;
+                _weights?.Dispose();
+                _weights = null;
+                _modelParams = null;
+                _modelReloadRequested = false;
+            }
+
             if (_executor is not null) return null;
 
             if (_config.ModelPath is null or { Length: 0 })

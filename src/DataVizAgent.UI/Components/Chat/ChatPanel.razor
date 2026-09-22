@@ -1,13 +1,38 @@
+@using System.IO
 @using DataVizAgent.Services
 @inject IChatService ChatService
 @inject LlamaConfig LlamaConfig
+@inject IModelManagerService Models
 @implements IDisposable
 
 <div class="chat-panel">
     <div class="chat-header">
         <h3>Chat</h3>
-        <span class="model-pill" title="@(LlamaConfig.ModelPath ?? "No model configured")">@ModelLabel</span>
+        <div class="model-controls">
+            @if (_installedModels.Count > 0)
+            {
+                <select class="model-select"
+                        title="@(LlamaConfig.ModelPath ?? "No model configured")"
+                        value="@ActiveModelValue"
+                        disabled="@_isThinking"
+                        @onchange="OnModelSelected">
+                    @foreach (InstalledModel model in _installedModels)
+                    {
+                        <option value="@model.FullPath">@Path.GetFileNameWithoutExtension(model.FileName)</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <span class="model-pill" title="@(LlamaConfig.ModelPath ?? "No model configured")">@ModelLabel</span>
+            }
+            <button type="button" class="model-manage-button" title="Switch models or download more" @onclick="() => _libraryOpen = true">Models…</button>
+        </div>
     </div>
+    @if (_modelSwitchNote is not null)
+    {
+        <p class="model-switch-note">@_modelSwitchNote</p>
+    }
     <div class="chat-messages" @ref="_messageContainer">
         @foreach (var msg in _messages)
         {
@@ -38,6 +63,11 @@
     </div>
 </div>
 
+@if (_libraryOpen)
+{
+    <ModelLibrary OnClose="CloseLibrary" />
+}
+
 @code {
     private record ChatMessageModel(string Role, string Text);
 
@@ -49,9 +79,15 @@
 
     private IConversationDisplayHistory? _displayHistory;
 
+    private IReadOnlyList<InstalledModel> _installedModels = [];
+    private bool _libraryOpen;
+    private string? _modelSwitchNote;
+
     protected override void OnInitialized()
     {
         ChatService.HistoryCleared += HandleHistoryCleared;
+        Models.Changed += HandleModelsChanged;
+        _installedModels = Models.GetInstalledModels();
 
         // Pipelines with persistent conversation (the agent pipeline) expose their prior log so the
         // chat panel can repopulate after a restart or a session load.
@@ -88,8 +124,40 @@
         get
         {
             string? path = LlamaConfig.ModelPath;
-            return string.IsNullOrWhiteSpace(path) ? "no model" : System.IO.Path.GetFileNameWithoutExtension(path);
+            return string.IsNullOrWhiteSpace(path) ? "no model" : Path.GetFileNameWithoutExtension(path);
         }
+    }
+
+    private string ActiveModelValue =>
+        _installedModels.FirstOrDefault(IsActiveModel)?.FullPath ?? _installedModels[0].FullPath;
+
+    private bool IsActiveModel(InstalledModel model) =>
+        !string.IsNullOrWhiteSpace(LlamaConfig.ModelPath) &&
+        string.Equals(model.FullPath, Path.GetFullPath(LlamaConfig.ModelPath), StringComparison.OrdinalIgnoreCase);
+
+    private void HandleModelsChanged()
+    {
+        InvokeAsync(() =>
+        {
+            _installedModels = Models.GetInstalledModels();
+            StateHasChanged();
+        });
+    }
+
+    private void OnModelSelected(ChangeEventArgs e)
+    {
+        string? path = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        string? error = Models.SwitchTo(path);
+        _modelSwitchNote = error ?? $"Switched to {Path.GetFileNameWithoutExtension(path)} — it loads on your next message.";
+    }
+
+    private void CloseLibrary()
+    {
+        _libraryOpen = false;
+        StateHasChanged();
     }
 
     private string ThinkingElapsedLabel
@@ -116,6 +184,7 @@
         if (string.IsNullOrWhiteSpace(_input) || _isThinking) return;
         string text = _input.Trim();
         _input = string.Empty;
+        _modelSwitchNote = null;
         _isThinking = true;
         _thinkingSince = DateTime.UtcNow;
         _ = TickWhileThinkingAsync();
@@ -169,6 +238,7 @@
     public void Dispose()
     {
         ChatService.HistoryCleared -= HandleHistoryCleared;
+        Models.Changed -= HandleModelsChanged;
         if (_displayHistory is not null)
             _displayHistory.DisplayHistoryChanged -= HandleDisplayHistoryChanged;
         _cts.Cancel();

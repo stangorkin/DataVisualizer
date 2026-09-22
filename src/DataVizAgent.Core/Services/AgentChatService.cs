@@ -116,13 +116,41 @@ internal sealed class AgentChatService : IChatService, IConversationStatePersist
         return Task.CompletedTask;
     }
 
+    /// <summary>Set when the active model changed; honored (rebuild agent + client) before the next message.</summary>
+    private volatile bool _modelReloadRequested;
+
+    public void RequestModelReload() => _modelReloadRequested = true;
+
     private async Task EnsureAgentAsync()
     {
-        if (_agent is not null && _session is not null) return;
+        if (_agent is not null && _session is not null && !_modelReloadRequested) return;
 
         await _buildLock.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (_modelReloadRequested)
+            {
+                // Deferred model switch: keep the conversation by stashing the serialized session,
+                // then rebuild the client and agent against the new LlamaConfig.ModelPath.
+                if (_agent is not null && _session is not null)
+                {
+                    try
+                    {
+                        _pendingSessionState = await _agent.SerializeSessionAsync(_session).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // A fresh session is an acceptable fallback; don't block the switch.
+                    }
+                }
+
+                _inner?.Dispose();
+                _inner = null;
+                _agent = null;
+                _session = null;
+                _modelReloadRequested = false;
+            }
+
             if (_agent is null)
             {
                 _inner = new LLamaSharpChatClient(_config);

@@ -1,0 +1,190 @@
+@using System.IO
+@using DataVizAgent.Models
+@using DataVizAgent.Services
+@inject IModelManagerService Models
+@implements IDisposable
+
+<div class="model-library-overlay" @onclick="RequestClose"></div>
+<div class="model-library" role="dialog" aria-label="Models">
+    <div class="model-library-head">
+        <h3>Models</h3>
+        <button type="button" class="model-library-close" title="Close" @onclick="RequestClose">×</button>
+    </div>
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+    @if (_notice is not null)
+    {
+        <p class="model-notice">@_notice</p>
+    }
+
+    <h4 class="model-section-title">Installed</h4>
+    @if (_installed.Count == 0)
+    {
+        <p class="hint">No models installed yet — download one below, or drop a <code>.gguf</code> into the <code>models</code> folder.</p>
+    }
+    else
+    {
+        <div class="model-rows">
+            @foreach (InstalledModel model in _installed)
+            {
+                <div class="model-row">
+                    <span class="model-row-name" title="@model.FullPath">@Path.GetFileNameWithoutExtension(model.FileName)</span>
+                    <span class="model-row-size">@FormatGb(model.SizeBytes)</span>
+                    @if (IsActive(model))
+                    {
+                        <span class="model-row-active">Active</span>
+                    }
+                    else
+                    {
+                        <button type="button" class="secondary-button" @onclick="() => Use(model)">Use</button>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    <h4 class="model-section-title">Recommended downloads</h4>
+    <div class="model-list">
+        @foreach (DownloadableModel model in Models.Catalog)
+        {
+            bool installed = Models.IsInstalled(model);
+            bool downloadingThis = _downloadingId == model.Id;
+            <div class="model-card @(model.IsRecommended ? "recommended" : null)">
+                <div class="model-card-head">
+                    <span class="model-card-name">@model.Name</span>
+                    <span class="model-card-tier">@model.Tier</span>
+                    <span class="model-card-size">@FormatGb(model.SizeBytes)</span>
+                </div>
+                <p class="model-card-desc">@model.Description</p>
+                @if (downloadingThis)
+                {
+                    <p class="hint">@PhaseLabel — @FormatGb(_progress.BytesReceived) of @FormatGb(_progress.TotalBytes) (@PercentLabel)</p>
+                    <div class="model-progress-track">
+                        <div class="model-progress-bar" style="width:@PercentLabel"></div>
+                    </div>
+                }
+                <div class="model-card-foot">
+                    <span class="model-card-hw">Needs: @model.HardwareHint</span>
+                    @if (downloadingThis)
+                    {
+                        <button type="button" class="secondary-button" @onclick="CancelDownload">Cancel</button>
+                    }
+                    else if (installed)
+                    {
+                        <span class="model-row-active">Installed</span>
+                    }
+                    else
+                    {
+                        <button type="button" class="primary-button" disabled="@(_downloadingId is not null)" @onclick="() => StartDownloadAsync(model)">Download</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <p class="hint">
+        Models live in the <code>models</code> folder next to the app. A newly selected or downloaded
+        model is used from your next message. Keep this panel open while a download runs.
+    </p>
+</div>
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private IReadOnlyList<InstalledModel> _installed = [];
+    private string? _downloadingId;
+    private ModelDownloadProgress _progress;
+    private CancellationTokenSource? _cts;
+    private string? _error;
+    private string? _notice;
+
+    protected override void OnInitialized()
+    {
+        Models.Changed += HandleModelsChanged;
+        _installed = Models.GetInstalledModels();
+    }
+
+    private void HandleModelsChanged()
+    {
+        InvokeAsync(() =>
+        {
+            _installed = Models.GetInstalledModels();
+            StateHasChanged();
+        });
+    }
+
+    private bool IsActive(InstalledModel model) =>
+        string.Equals(model.FullPath, Models.ActiveModelPath, StringComparison.OrdinalIgnoreCase);
+
+    private void Use(InstalledModel model)
+    {
+        _error = Models.SwitchTo(model.FullPath);
+        _notice = _error is null
+            ? $"{Path.GetFileNameWithoutExtension(model.FileName)} is now active — it loads on your next message."
+            : null;
+    }
+
+    private string PercentLabel => $"{_progress.Fraction * 100:0}%";
+
+    private string PhaseLabel => _progress.Phase == ModelDownloadPhase.Verifying ? "Verifying" : "Downloading";
+
+    private static string FormatGb(long bytes) => $"{bytes / 1_000_000_000d:0.0} GB";
+
+    private async Task StartDownloadAsync(DownloadableModel model)
+    {
+        _error = null;
+        _notice = null;
+        _downloadingId = model.Id;
+        _progress = new ModelDownloadProgress(ModelDownloadPhase.Downloading, 0, model.SizeBytes);
+        _cts = new CancellationTokenSource();
+
+        var progress = new Progress<ModelDownloadProgress>(value =>
+        {
+            _progress = value;
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            await Models.DownloadAsync(model, progress, _cts.Token);
+            _notice = $"{model.Name} installed and active — it loads on your next message.";
+        }
+        catch (OperationCanceledException)
+        {
+            _error = "Download canceled. The partial file is kept and resumes next time.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _downloadingId = null;
+            _cts?.Dispose();
+            _cts = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void CancelDownload() => _cts?.Cancel();
+
+    private Task RequestClose()
+    {
+        // Closing mid-download would abandon the progress UI (and disposal cancels the transfer),
+        // so the panel stays open until the download finishes or is canceled.
+        if (_downloadingId is not null)
+            return Task.CompletedTask;
+
+        return OnClose.InvokeAsync();
+    }
+
+    public void Dispose()
+    {
+        Models.Changed -= HandleModelsChanged;
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

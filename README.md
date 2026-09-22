@@ -60,6 +60,8 @@ These four models are the ones the **in-app first-run downloader** offers; this 
 | **[Qwen3-14B](https://huggingface.co/bartowski/Qwen_Qwen3-14B-GGUF)** | ~9.0 GB | 32 GB RAM (slow on CPU), or 12 GB VRAM | Higher-quality reasoning on ambiguous requests. Best with a mid/high-end GPU — slow if run purely on CPU. |
 | **[Qwen3-30B-A3B](https://huggingface.co/bartowski/Qwen_Qwen3-30B-A3B-GGUF)** | ~18.6 GB | 32 GB+ RAM, or 24 GB VRAM | Top tier. A mixture-of-experts model with only ~3B *active* parameters, so it runs much faster than its size implies while answering like a far larger model. For workstations / high-VRAM GPUs. |
 
+**Switching and adding models in-app:** the dropdown in the chat header switches between every `.gguf` in the `models` folder, and the **Models…** button opens a library where any of the models above can be downloaded from inside the app (resumable, SHA-256-verified). A switch takes effect on your next message — the conversation is kept — and your choice is remembered across launches.
+
 Notes:
 
 - **Quantization.** `Q4_K_M` is the recommended balance. Each repo also offers smaller quants (`Q3_K_*`, less RAM, some quality loss) and larger ones (`Q5`/`Q6`/`Q8`, better quality, more RAM) — pick another file from the same repo if you want to trade size for quality.
@@ -122,7 +124,7 @@ The app resolves the model in this order:
 
 | Key | Default | Description |
 |---|---|---|
-| `LLamaSharp:ModelPath` | `models/` | Path to the GGUF file (see resolution order above) |
+| `LLamaSharp:ModelPath` | `models/` | Path to a GGUF file or a folder of them (see resolution order above). A model chosen with the in-app switcher takes precedence over a folder value and is remembered per user. |
 | `LLamaSharp:Backend` | `cpu` | `cpu` or `cuda` (`cuda` requires a build with `-p:EnableCuda=true`; falls back to CPU otherwise) |
 | `LLamaSharp:Pipeline` | `legacy` | Agent engine: `legacy` (hand-written response parser), `tools` (Microsoft.Extensions.AI function-calling pipeline), or `agent` (Microsoft Agent Framework, with conversation that persists into the session file). See [Agent pipeline](#agent-pipeline-experimental). |
 | `LLamaSharp:ConstrainToolCalls` | `true` | `tools` pipeline only: constrain tool-call output with a GBNF grammar generated from the tool schemas, so the model cannot emit a malformed call. Set `false` to compare against prompted-only tool calling. |

@@ -1,6 +1,6 @@
 @using DataVizAgent.Models
 @using DataVizAgent.Services
-@inject IModelDownloadService Downloads
+@inject IModelManagerService Models
 
 @if (_downloading && _selected is not null)
 {
@@ -20,7 +20,7 @@ else if (_state == SetupState.Done)
         <button type="button" class="secondary-button" @onclick="() => _state = SetupState.Idle">Dismiss</button>
     </div>
 }
-else if (!Downloads.IsModelInstalled())
+else if (!Models.IsAnyModelInstalled())
 {
     <div class="model-setup">
         <h3>Set up a model</h3>
@@ -35,7 +35,7 @@ else if (!Downloads.IsModelInstalled())
         }
 
         <div class="model-list">
-            @foreach (DownloadableModel model in Downloads.Catalog)
+            @foreach (DownloadableModel model in Models.Catalog)
             {
                 <div class="model-card @(model.IsRecommended ? "recommended" : null)">
                     <div class="model-card-head">
@@ -86,7 +86,7 @@ else if (!Downloads.IsModelInstalled())
 
         try
         {
-            await Downloads.DownloadAsync(model, progress, _cts.Token);
+            await Models.DownloadAsync(model, progress, _cts.Token);
             _state = SetupState.Done;
         }
         catch (OperationCanceledException)

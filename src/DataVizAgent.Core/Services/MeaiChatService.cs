@@ -85,13 +85,30 @@ internal sealed class MeaiChatService : IChatService, IAsyncDisposable
         HistoryCleared?.Invoke();
     }
 
+    /// <summary>Set when the active model changed; honored (rebuild client + pipeline) before the next message.</summary>
+    private volatile bool _modelReloadRequested;
+
+    public void RequestModelReload() => _modelReloadRequested = true;
+
     private async Task EnsurePipelineAsync()
     {
-        if (_pipeline is not null) return;
+        if (_pipeline is not null && !_modelReloadRequested) return;
 
         await _buildLock.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (_modelReloadRequested)
+            {
+                // Deferred model switch: rebuild the client (and therefore the loaded weights)
+                // against the new LlamaConfig.ModelPath before the next turn starts.
+                _pipeline?.Dispose();
+                _inner?.Dispose();
+                _pipeline = null;
+                _inner = null;
+                _tools = null;
+                _modelReloadRequested = false;
+            }
+
             if (_pipeline is not null) return;
 
             _inner = new LLamaSharpChatClient(_config);
